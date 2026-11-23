@@ -1,0 +1,8 @@
+# Godot editor cache: regenerated automatically when the project opens.
+# (Also contains export_credentials.cfg, which must never be committed.)
+.godot/
+
+# Export output: attach builds to a GitHub Release instead of committing them.
+*.exe
+*.pck
+*.zip

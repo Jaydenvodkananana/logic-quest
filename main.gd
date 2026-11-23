@@ -24,6 +24,7 @@ var sel_index := -1
 var row_tokens: Array = []
 var box_panels: Dictionary = {}
 var pending_crowd: Array = []
+var guess_entered := false   # predict: тоглогч энэ оролдлогод таамаглалаа оруулсан эсэх
 var mono_font: SystemFont
 
 var title_label: Label
@@ -54,29 +55,89 @@ var ce_val: SpinBox
 var ce_mult: SpinBox
 var cin_list: ItemList
 var tutorial_panel: VBoxContainer
+# Нөхцлийн (flow) түвшнүүд: тайлбар (explain) → мини тест (test) → дууссан (done)
+var flow_panel: VBoxContainer
+var challenge: ChallengePanel
+var flow_code: VBoxContainer
+var flow_view: FlowView
+var flow_in_slot: VBoxContainer
+var flow_out_slot: VBoxContainer
+var flow_in_panel: PanelContainer
+var flow_in_val: Label
+var flow_out_panel: PanelContainer
+var flow_out_val: Label
+var flow_rows: Array = []
+var flow_phase := ""
+var flow_step := 0
+var flow_busy := false
+var flow_correct := 0
+var flow_round := 0
+var flow_op := ">"
+var flow_op_queue: Array = []   # тестийн операторуудын ээлж
+var flow_input := 0
+var flow_big := 0
+var flow_small := 0
+const FLOW_NEED := 3   # тестийг давахад шаардлагатай зөв хариулт
 var code_row: HBoxContainer
 var tut_name: Label
+var tut_name_tag: PanelContainer
+var glow_tween: Tween      # дараагийн хийх товчны анивчих гэрэл (_update_glow)
+var glow_target: Control
+var glow_saved: Dictionary = {}   # гэрэлтэхээс өмнөх stylebox override-ууд
+var tut_type_tag: PanelContainer
 var tut_box: PanelContainer
 var tut_value: Label
 var tut_caption: Label
 var fly_layer: Control
 var tut_step := 0
 var tut_busy := false
+# Таамгийн хайрцаг (predict): «Таны таамаг» тасархай хайрцаг + дууссаны дараа «Жинхэнэ» хайрцаг.
 var predict_row: HBoxContainer
-var predict_label: Label
-var predict_spin: SpinBox
+var guess_name: Label
+var guess_edit: LineEdit
+var guess_mark: Label
+var real_col: VBoxContainer
+var real_box: PanelContainer
+var real_value: Label
+var real_name: Label
+var row_panels: Array = []   # кодын мөр бүрийн карт
+# Мөр чирэх (түвшин 5)
+var drag_card: PanelContainer = null
+var drag_candidate: PanelContainer = null
+var drag_press := Vector2.ZERO
+var drag_grab := Vector2.ZERO
+var wrong_tries := 0   # predict: энэ тойрогт буруу таамагласан тоо (3 дахь дээр хариу харагдана)
+var tut_v := 2         # үзүүлэн заавар: санамсаргүй анхны утга
+var tut_k := 1         # үзүүлэн заавар: санамсаргүй нэмэх тоо
 var controls: HBoxContainer
 var message_label: Label
 var btn_start: Button
 var btn_step: Button
 var btn_run: Button
 var btn_reset: Button
-var btn_up: Button
-var btn_down: Button
 var btn_test: Button
 var btn_tut: Button
 var btn_replay: Button
 var btn_next: Button
+var btn_skip: Button
+var btn_false: Button   # нөхцлийн тест: «← ХУДАЛ»
+var btn_true: Button    # нөхцлийн тест: «ҮНЭН →»
+var choice_styles: Array = []
+# Анимаци алгасах (F): ажиллаж буй ба шинэ анимацийн tween-үүдийг SKIP_SCALE дахин хурдасгана.
+const SKIP_SCALE := 60.0
+var skipping := false
+var anim_tweens: Array = []
+
+
+## Таамгийн хайрцгийн тасархай хүрээ: «энэ бол жинхэнэ утга биш, таны таамаг» гэдгийг харуулна.
+class DashedBox extends PanelContainer:
+	var dash_color := Color(0.9, 0.9, 0.95)
+
+	func _draw() -> void:
+		var r := Rect2(Vector2(2, 2), size - Vector2(4, 4))
+		var c := [r.position, Vector2(r.end.x, r.position.y), r.end, Vector2(r.position.x, r.end.y)]
+		for i in 4:
+			draw_dashed_line(c[i], c[(i + 1) % 4], dash_color, 3.0, 10.0)
 
 
 func _ready() -> void:
@@ -149,15 +210,16 @@ func _build_ui() -> void:
 	left.size_flags_stretch_ratio = 1.3
 	left.add_theme_constant_override("separation", 8)
 	main_row.add_child(left)
-	left.add_child(_label("ПРОГРАМ (дээрээс доош ажиллана)"))
+	left.add_child(_label("C++"))
 	code_box = VBoxContainer.new()
 	code_box.add_theme_constant_override("separation", 6)
 	left.add_child(code_box)
+	_build_guess_area(left)
 
 	var right := VBoxContainer.new()
 	right.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	main_row.add_child(right)
-	right.add_child(_label("САНАХ ОЙН ХАЙРЦАГ"))
+	right.add_child(_label("Санах ой"))
 	boxes = HFlowContainer.new()
 	boxes.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	boxes.add_theme_constant_override("h_separation", 12)
@@ -176,15 +238,15 @@ func _build_ui() -> void:
 	guard_panel.add_child(gl)
 	gl.add_child(_label("ХАМГААЛАГЧИЙН ДҮРЭМ"))
 	var row1 := _row(gl)
-	row1.add_child(_code_label("if age"))
+	row1.add_child(_code_label("age"))
 	op1 = _make_op_option(true)
 	row1.add_child(op1)
 	val1 = _make_spin(0, 99, true)
 	row1.add_child(val1)
 	rule2_row = _row(gl)
 	join_opt = OptionButton.new()
-	join_opt.add_item("and")
-	join_opt.add_item("or")
+	join_opt.add_item("&&")
+	join_opt.add_item("||")
 	join_opt.custom_minimum_size = Vector2(100, 44)
 	join_opt.item_selected.connect(func(_i): _update_guard_code())
 	rule2_row.add_child(join_opt)
@@ -207,45 +269,50 @@ func _build_ui() -> void:
 	var cl := VBoxContainer.new()
 	cl.add_theme_constant_override("separation", 6)
 	cinema_panel.add_child(cl)
-	cl.add_child(_label("ПРОГРАМ (хоосон талбаруудыг өөрөө бөглө)"))
-	cl.add_child(_code_label("price = 0"))
+	cl.add_child(_label("C++ ПРОГРАМ (хоосон талбаруудыг өөрөө бөглө)"))
+	cl.add_child(_code_label("double price = 0;"))
 	var r1 := _row(cl)
-	r1.add_child(_code_label("if age"))
+	r1.add_child(_code_label("if (age"))
 	ca_op = _make_op_option(false)
 	r1.add_child(ca_op)
 	ca_val = _make_spin(0, 100)
 	r1.add_child(ca_val)
-	r1.add_child(_code_label(":  price ="))
+	r1.add_child(_code_label(")  price ="))
 	ca_price = _make_spin(0, 50)
 	r1.add_child(ca_price)
+	r1.add_child(_code_label(";"))
 	var r2 := _row(cl)
-	r2.add_child(_code_label("elif age"))
+	r2.add_child(_code_label("else if (age"))
 	cb_op = _make_op_option(false)
 	r2.add_child(cb_op)
 	cb_val = _make_spin(0, 100)
 	r2.add_child(cb_val)
-	r2.add_child(_code_label(":  price ="))
+	r2.add_child(_code_label(")  price ="))
 	cb_price = _make_spin(0, 50)
 	r2.add_child(cb_price)
+	r2.add_child(_code_label(";"))
 	var r3 := _row(cl)
-	r3.add_child(_code_label("else:  price ="))
+	r3.add_child(_code_label("else  price ="))
 	cc_price = _make_spin(0, 50)
 	r3.add_child(cc_price)
+	r3.add_child(_code_label(";"))
 	var r4 := _row(cl)
-	r4.add_child(_code_label("if day =="))
+	r4.add_child(_code_label("if (day =="))
 	cd_val = _make_spin(0, 7)
 	r4.add_child(cd_val)
-	r4.add_child(_code_label(":  price = price -"))
+	r4.add_child(_code_label(")  price = price -"))
 	cd_minus = _make_spin(0, 20)
 	r4.add_child(cd_minus)
+	r4.add_child(_code_label(";"))
 	var r5 := _row(cl)
-	r5.add_child(_code_label("if coupon =="))
+	r5.add_child(_code_label("if (coupon =="))
 	ce_val = _make_spin(0, 1)
 	r5.add_child(ce_val)
-	r5.add_child(_code_label(":  price = price *"))
+	r5.add_child(_code_label(")  price = price *"))
 	ce_mult = _make_spin(0, 2)
 	ce_mult.step = 0.05
 	r5.add_child(ce_mult)
+	r5.add_child(_code_label(";"))
 	var cr := VBoxContainer.new()
 	cr.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	cinema_panel.add_child(cr)
@@ -270,55 +337,112 @@ func _build_ui() -> void:
 	var spacer := Control.new()
 	spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	tutorial_panel.add_child(spacer)
-	tut_name = Label.new()
-	tut_name.text = "a"
-	tut_name.add_theme_font_size_override("font_size", 36)
-	var name_center := CenterContainer.new()
-	name_center.add_child(tut_name)
-	tutorial_panel.add_child(name_center)
+	# Хайрцаг = нэрийн шошго (таг) + хайрцаг + төрлийн наалт (int). Тайлбар биш, дүрс өөрөө ярина.
+	var box_stack := VBoxContainer.new()
+	box_stack.add_theme_constant_override("separation", 0)
+	var box_center := CenterContainer.new()
+	box_center.add_child(box_stack)
+	tutorial_panel.add_child(box_center)
+	tut_name_tag = PanelContainer.new()
+	tut_name_tag.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	tut_name_tag.add_theme_stylebox_override("panel", _tag_style(Color(0.12, 0.14, 0.2), Color(0.9, 0.9, 0.95)))
+	tut_name = _code_label("a", 34)
+	tut_name_tag.add_child(tut_name)
+	box_stack.add_child(tut_name_tag)
 	tut_box = PanelContainer.new()
 	tut_box.custom_minimum_size = Vector2(200, 130)
 	tut_box.add_theme_stylebox_override("panel", _box_style())
-	var box_center := CenterContainer.new()
-	box_center.add_child(tut_box)
-	tutorial_panel.add_child(box_center)
+	box_stack.add_child(tut_box)
 	tut_value = Label.new()
 	tut_value.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	tut_value.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	tut_value.add_theme_font_size_override("font_size", 64)
 	tut_box.add_child(tut_value)
+	tut_type_tag = PanelContainer.new()
+	tut_type_tag.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	tut_type_tag.add_theme_stylebox_override("panel", _tag_style(YELLOW, YELLOW))
+	var type_label := _code_label("int", 26)
+	type_label.add_theme_color_override("font_color", Color(0.1, 0.1, 0.12))
+	tut_type_tag.add_child(type_label)
+	box_stack.add_child(tut_type_tag)
 	tut_caption = Label.new()
 	tut_caption.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	tut_caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	tut_caption.custom_minimum_size = Vector2(0, 80)
+	tut_caption.add_theme_font_size_override("font_size", 26)
 	tutorial_panel.add_child(tut_caption)
 
-	# --- Таамаглал ---
-	predict_row = HBoxContainer.new()
-	root.add_child(predict_row)
-	predict_label = Label.new()
-	predict_row.add_child(predict_label)
-	predict_spin = SpinBox.new()
-	predict_spin.min_value = -1000
-	predict_spin.max_value = 1000
-	predict_spin.step = 1
-	predict_spin.custom_minimum_size = Vector2(140, 0)
-	predict_row.add_child(predict_spin)
+	# --- Нөхцөл (flow): дээр нь код, доор нь блок схем + хувьсагчийн хайрцгууд (түвшин 1-ийн загвар) ---
+	flow_panel = VBoxContainer.new()
+	flow_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	flow_panel.add_theme_constant_override("separation", 8)
+	root.add_child(flow_panel)
+	flow_code = VBoxContainer.new()
+	flow_code.add_theme_constant_override("separation", 2)
+	var fc_center := CenterContainer.new()
+	fc_center.add_child(flow_code)
+	flow_panel.add_child(fc_center)
+	var flow_row := HBoxContainer.new()
+	flow_row.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	flow_row.add_theme_constant_override("separation", 16)
+	flow_panel.add_child(flow_row)
+	flow_in_slot = VBoxContainer.new()
+	flow_in_slot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	flow_row.add_child(flow_in_slot)
+	flow_view = FlowView.new()
+	flow_view.mono = mono_font
+	flow_view.side_chosen.connect(_flow_choose)
+	flow_row.add_child(flow_view)
+	flow_out_slot = VBoxContainer.new()
+	flow_out_slot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	flow_row.add_child(flow_out_slot)
 
-	# --- Товчнууд ---
+	# --- Сорилт (нэмэлт түвшин): Батаагийн автобус, блокоор програм засах ---
+	challenge = ChallengePanel.new()
+	root.add_child(challenge)
+	challenge.setup(mono_font, _update_glow)
+	challenge.solved.connect(_on_challenge_solved)
+	challenge.skipped.connect(_on_challenge_skipped)
+	challenge.message.connect(_show_message)
+
+	# --- Товчнууд (гарын товчлол: _unhandled_input) ---
 	controls = HBoxContainer.new()
 	controls.add_theme_constant_override("separation", 8)
 	root.add_child(controls)
-	btn_start = _make_button("Эхлэх", _on_start)
-	btn_step = _make_button("Алхам", _on_step)
-	btn_run = _make_button("Бүгдийг ажиллуулах", _on_run_all)
+	btn_start = _make_button("Эхлэх", _on_start, "Enter")
+	btn_step = _make_button("Алхам", _on_step_pressed, "Enter")
+	btn_run = _make_button("Бүгдийг ажиллуулах", _on_run_all, "Space")
 	btn_reset = _make_button("Дахин эхлэх", _on_reset)
-	btn_up = _make_button("Дээш зөөх", func(): _move(-1))
-	btn_down = _make_button("Доош зөөх", func(): _move(1))
 	btn_test = _make_button("Турших", _on_test)
-	btn_tut = _make_button("Дараагийн алхам", _on_tut_next)
+	btn_tut = _make_button("Дараагийн алхам", _on_tut_next, "→ / D")
 	btn_replay = _make_button("Дахин үзэх", _on_tut_replay)
-	btn_next = _make_button("Дараагийн түвшин", _on_next)
+	btn_next = _make_button("Дараагийн түвшин", _on_next, "→ / D")
+	btn_skip = _make_button("Алгасах »", _on_skip, "F")
+	# Нөхцлийн тестийн хариултын товчнууд (улаан/ногоон, анивчина).
+	btn_false = _make_button("←  ХУДАЛ", func(): _flow_choose(0), "← (F зам)")
+	btn_true = _make_button("ҮНЭН  →", func(): _flow_choose(1), "→ (T зам)")
+	for pair in [[btn_false, FlowView.RED], [btn_true, FlowView.GREEN]]:
+		var b: Button = pair[0]
+		b.custom_minimum_size = Vector2(150, 44)
+		b.add_theme_font_size_override("font_size", 22)
+		var sb := StyleBoxFlat.new()
+		sb.bg_color = (pair[1] as Color).darkened(0.75)
+		sb.set_border_width_all(3)
+		sb.border_color = pair[1]
+		sb.set_corner_radius_all(6)
+		sb.shadow_color = Color(pair[1], 0.5)
+		sb.set_content_margin_all(8)
+		for state in ["normal", "hover", "pressed"]:
+			b.add_theme_stylebox_override(state, sb)
+		b.add_theme_color_override("font_color", pair[1])
+		b.add_theme_color_override("font_hover_color", Color.WHITE)
+		choice_styles.append(sb)
+		b.visible = false
+	# Анивчих гэрэл (байнга ажиллана; товч харагдах үед л мэдэгдэнэ).
+	var ct := create_tween().set_loops()
+	for target in [10, 0]:
+		ct.tween_property(choice_styles[0], "shadow_size", target, 0.6).set_trans(Tween.TRANS_SINE)
+		ct.parallel().tween_property(choice_styles[1], "shadow_size", target, 0.6).set_trans(Tween.TRANS_SINE)
 
 	message_label = Label.new()
 	message_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -341,13 +465,115 @@ func _box_style() -> StyleBoxFlat:
 	return bs
 
 
-func _make_button(text: String, handler: Callable) -> Button:
+## Хайрцагт наасан жижиг шошгоны загвар (нэр ба төрөл).
+func _tag_style(bg: Color, border: Color) -> StyleBoxFlat:
+	var s := StyleBoxFlat.new()
+	s.bg_color = bg
+	s.set_border_width_all(2)
+	s.border_color = border
+	s.set_corner_radius_all(6)
+	s.content_margin_left = 14
+	s.content_margin_right = 14
+	s.content_margin_top = 2
+	s.content_margin_bottom = 2
+	return s
+
+
+func _make_button(text: String, handler: Callable, key_hint: String = "") -> Button:
 	var b := Button.new()
 	b.text = text
 	b.custom_minimum_size = Vector2(0, 44)
+	# Товч фокус авахгүй: эс бөгөөс Enter/Space нь сүүлд дарсан товчийг дахин дарна.
+	b.focus_mode = Control.FOCUS_NONE
+	b.tooltip_text = key_hint
 	b.pressed.connect(handler)
 	controls.add_child(b)
 	return b
+
+
+## «Таны таамаг» тасархай хайрцаг ба (дууссаны дараа) «Жинхэнэ» хайрцаг, хооронд нь ✓/✗.
+func _build_guess_area(parent: Control) -> void:
+	predict_row = HBoxContainer.new()
+	predict_row.add_theme_constant_override("separation", 18)
+	parent.add_child(predict_row)
+
+	var guess_col := VBoxContainer.new()
+	guess_col.add_theme_constant_override("separation", 0)
+	predict_row.add_child(guess_col)
+	guess_col.add_child(_label("Таны таамаг"))
+	var gtag := PanelContainer.new()
+	gtag.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	gtag.add_theme_stylebox_override("panel", _tag_style(Color(0.12, 0.14, 0.2), Color(0.9, 0.9, 0.95)))
+	guess_name = _code_label("b", 22)
+	gtag.add_child(guess_name)
+	guess_col.add_child(gtag)
+	var dbox := DashedBox.new()
+	dbox.custom_minimum_size = Vector2(120, 72)
+	var empty := StyleBoxFlat.new()
+	empty.bg_color = Color(0.12, 0.14, 0.2, 0.6)
+	empty.set_corner_radius_all(8)
+	empty.set_content_margin_all(6)   # тодорхой зай: гэрэлтэх үед хайрцаг томрохгүй
+	dbox.add_theme_stylebox_override("panel", empty)
+	guess_col.add_child(dbox)
+	guess_edit = LineEdit.new()
+	guess_edit.alignment = HORIZONTAL_ALIGNMENT_CENTER
+	guess_edit.max_length = 5
+	guess_edit.custom_minimum_size = Vector2(100, 56)
+	guess_edit.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	guess_edit.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	guess_edit.add_theme_font_size_override("font_size", 36)
+	var clear := StyleBoxFlat.new()
+	clear.bg_color = Color(0, 0, 0, 0)
+	clear.set_content_margin_all(4)
+	for state in ["normal", "focus", "read_only"]:
+		guess_edit.add_theme_stylebox_override(state, clear)
+	guess_edit.text_changed.connect(_on_guess_changed)
+	guess_edit.gui_input.connect(_on_guess_key)   # тоог физик товчоор (монгол гарын байрлалд ч)
+	# Хайрцгийн аль ч хэсэгт дарахад бичих нүд идэвхжинэ.
+	dbox.gui_input.connect(func(e: InputEvent):
+		if e is InputEventMouseButton and e.pressed and guess_edit.editable:
+			guess_edit.grab_focus())
+	guess_edit.text_submitted.connect(func(_t): _on_start())   # таамаг бичээд Enter = Эхлэх
+	dbox.add_child(guess_edit)
+	var gtype := PanelContainer.new()
+	gtype.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	gtype.add_theme_stylebox_override("panel", _tag_style(YELLOW, YELLOW))
+	var gtl := _code_label("int", 18)
+	gtl.add_theme_color_override("font_color", Color(0.1, 0.1, 0.12))
+	gtype.add_child(gtl)
+	guess_col.add_child(gtype)
+
+	guess_mark = Label.new()
+	guess_mark.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	guess_mark.add_theme_font_size_override("font_size", 48)
+	predict_row.add_child(guess_mark)
+
+	real_col = VBoxContainer.new()
+	real_col.add_theme_constant_override("separation", 0)
+	predict_row.add_child(real_col)
+	real_col.add_child(_label("Жинхэнэ"))
+	var rtag := PanelContainer.new()
+	rtag.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	rtag.add_theme_stylebox_override("panel", _tag_style(Color(0.12, 0.14, 0.2), Color(0.9, 0.9, 0.95)))
+	real_name = _code_label("b", 22)
+	rtag.add_child(real_name)
+	real_col.add_child(rtag)
+	real_box = PanelContainer.new()
+	real_box.custom_minimum_size = Vector2(120, 72)
+	real_box.add_theme_stylebox_override("panel", _box_style())
+	real_value = Label.new()
+	real_value.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	real_value.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	real_value.add_theme_font_size_override("font_size", 36)
+	real_box.add_child(real_value)
+	real_col.add_child(real_box)
+	var rtype := PanelContainer.new()
+	rtype.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	rtype.add_theme_stylebox_override("panel", _tag_style(YELLOW, YELLOW))
+	var rtl := _code_label("int", 18)
+	rtl.add_theme_color_override("font_color", Color(0.1, 0.1, 0.12))
+	rtype.add_child(rtl)
+	real_col.add_child(rtype)
 
 
 func _make_op_option(live: bool) -> OptionButton:
@@ -383,24 +609,33 @@ func _setup_level() -> void:
 	var mode: String = cur.mode
 	program = cur.lines.duplicate()
 	sel_index = -1
+	wrong_tries = 0   # шинэ тоонууд = шинэ тойрог, 3 оролдлого
 	title_label.text = "Түвшин %d / %d  -  %s" % [level_index + 1, templates.size(), cur.title]
 	story_label.text = cur.story
-	predict_label.text = "Ажиллуулахаас өмнө: төгсгөлд '%s' хэд болох вэ?   " % cur.get("ask", "")
+	guess_name.text = cur.get("ask", "")
+	real_name.text = cur.get("ask", "")
 	var is_play := mode == "predict" or mode == "arrange"
 	main_row.visible = is_play
 	guard_panel.visible = mode == "guard"
 	cinema_panel.visible = mode == "cinema"
 	tutorial_panel.visible = mode == "tutorial"
+	flow_panel.visible = mode == "flow"
+	challenge.visible = mode == "challenge"
+	# Сорилт бүтэн цонхыг ашиглана: гарчиг, түүх, мессежийн мөр нуугдана (Батаа өөрөө ярина).
+	story_label.visible = mode != "challenge"
+	title_label.visible = mode != "challenge"
+	message_label.visible = mode != "challenge"
 	predict_row.visible = mode == "predict"
 	btn_start.visible = is_play
 	btn_step.visible = is_play
 	btn_run.visible = is_play
 	btn_reset.visible = is_play
-	btn_up.visible = mode == "arrange"
-	btn_down.visible = mode == "arrange"
+	btn_skip.visible = not (mode in ["cinema", "challenge"])   # сорилтод F товч хангалттай (2 «Алгасах» товч төөрөгдүүлнэ)
+	btn_false.visible = false   # зөвхөн нөхцлийн тестийн үед харагдана
+	btn_true.visible = false
 	btn_test.visible = mode == "guard" or mode == "cinema"
-	btn_tut.visible = mode == "tutorial"
-	btn_replay.visible = mode == "tutorial"
+	btn_tut.visible = mode == "tutorial" or mode == "flow"
+	btn_replay.visible = mode == "tutorial" or mode == "flow"
 	if mode == "guard":
 		_setup_guard()
 	elif mode == "cinema":
@@ -416,7 +651,14 @@ func _reset_state() -> void:
 	interp.load_program(program)
 	states.resize(program.size())
 	states.fill(0)
-	predict_spin.editable = true
+	# Өмнөх түвшний таамаглал дараагийнх руу шилжихгүй.
+	guess_edit.editable = true
+	guess_edit.text = ""
+	guess_entered = false
+	guess_mark.text = ""
+	real_col.visible = false
+	if cur.mode == "predict":
+		guess_edit.call_deferred("grab_focus")   # шууд бичиж эхэлж болно
 	if cur.mode == "guard":
 		message_label.text = "Дүрмээ тохируулаад Турших товчийг дар."
 	elif cur.mode == "cinema":
@@ -424,9 +666,16 @@ func _reset_state() -> void:
 	elif cur.mode == "tutorial":
 		message_label.text = ""
 		_tut_reset()
+	elif cur.mode == "flow":
+		message_label.text = ""
+		_flow_reset()
+	elif cur.mode == "challenge":
+		message_label.text = ""
+		challenge.start()
 	else:
-		message_label.text = "Бэлэн болмогц Эхлэх товчийг дар."
+		message_label.text = ""   # predict / arrange: дараагийн товч гэрэлтэж заана
 	message_label.remove_theme_color_override("font_color")
+	message_label.remove_theme_font_size_override("font_size")
 	btn_next.visible = false
 	_refresh_code()
 	_refresh_boxes({})
@@ -438,11 +687,98 @@ func _update_buttons() -> void:
 	btn_step.disabled = not started or finished or busy
 	btn_run.disabled = not started or finished or busy
 	btn_reset.disabled = not started or busy
-	btn_up.disabled = started or busy
-	btn_down.disabled = started or busy
+	_update_glow()
+
+
+## Тоглогчийн дараагийн хийх ёстой зүйлийг гэрэлтүүлнэ (заавар бичгийн оронд).
+## Түвшин 1-5 л ашиглана. Нөхцөлийн түвшнүүдэд гэрэл байхгүй.
+func _update_glow() -> void:
+	var target: Control = null
+	match cur.get("mode", ""):
+		"tutorial":
+			if tut_step == 0 and not tut_busy:
+				target = btn_tut
+		"challenge":
+			target = btn_next if btn_next.visible else challenge.glow_target()
+		"flow":
+			# Тайлбарын үед «Дараагийн алхам», тестийн үед схем өөрөө (гэрэлгүй), дууссан бол «Дараагийн түвшин».
+			if btn_next.visible:
+				target = btn_next
+			elif flow_phase == "explain" and not flow_busy:
+				target = btn_tut
+		"predict", "arrange":
+			if btn_next.visible:
+				target = btn_next
+			elif busy:
+				target = null
+			elif finished:
+				target = btn_reset
+			elif started:
+				target = btn_step
+			elif cur.mode == "predict" and not guess_entered:
+				target = guess_edit.get_parent()   # тасархай таамгийн хайрцаг
+			else:
+				target = btn_start
+	_set_glow(target)
+
+
+func _glow_states(c: Control) -> Array:
+	if c is PanelContainer:
+		return ["panel"]
+	if c is LineEdit:
+		return ["normal", "focus", "read_only"]
+	return ["normal", "hover", "pressed", "focus"]
+
+
+## Шар хүрээ + зөөлөн анивчих гэрэл. null өгвөл гэрлийг унтраана.
+func _set_glow(target: Control) -> void:
+	if target == glow_target:
+		return
+	if glow_tween != null:
+		glow_tween.kill()
+		glow_tween = null
+	if glow_target != null:
+		# Гэрлээс өмнөх өөрийн загварыг (байсан бол) сэргээнэ.
+		for state in _glow_states(glow_target):
+			if glow_saved.has(state):
+				glow_target.add_theme_stylebox_override(state, glow_saved[state])
+			else:
+				glow_target.remove_theme_stylebox_override(state)
+	glow_saved = {}
+	glow_target = target
+	if target == null:
+		return
+	for state in _glow_states(target):
+		if target.has_theme_stylebox_override(state):
+			glow_saved[state] = target.get_theme_stylebox(state)
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.2, 0.19, 0.12)
+	sb.set_border_width_all(3)
+	sb.border_color = YELLOW
+	sb.set_corner_radius_all(6)
+	sb.shadow_color = Color(YELLOW, 0.55)
+	sb.shadow_size = 0
+	# Товчны өөрийн дотоод зайг хуулна: гэрэлтэх үед товч томрохгүй, бусад нь шилжихгүй.
+	var base: StyleBox = target.get_theme_stylebox(_glow_states(target)[0])
+	for side in [SIDE_LEFT, SIDE_TOP, SIDE_RIGHT, SIDE_BOTTOM]:
+		sb.set_content_margin(side, base.get_content_margin(side))
+	for state in _glow_states(target):
+		target.add_theme_stylebox_override(state, sb)
+	# Тогтмол хугацаа (_t() биш): хязгааргүй давталт 0 хугацаатай байж болохгүй.
+	glow_tween = create_tween().set_loops()
+	glow_tween.tween_property(sb, "shadow_size", 12, 0.7).set_trans(Tween.TRANS_SINE)
+	glow_tween.tween_property(sb, "shadow_size", 0, 0.7).set_trans(Tween.TRANS_SINE)
+
+
+## Тоглогчид тавих асуулт: том, шар үсгээр (энгийн мессежээс ялгарна).
+func _show_question(text: String) -> void:
+	message_label.text = text
+	message_label.add_theme_color_override("font_color", YELLOW)
+	message_label.add_theme_font_size_override("font_size", 28)
 
 
 func _show_message(text: String, good_or_bad: int = 0) -> void:
+	message_label.remove_theme_font_size_override("font_size")
 	message_label.text = text
 	match good_or_bad:
 		1: message_label.add_theme_color_override("font_color", Color(0.4, 0.9, 0.5))
@@ -453,10 +789,25 @@ func _show_message(text: String, good_or_bad: int = 0) -> void:
 func _offer_next() -> void:
 	btn_next.text = "Дараагийн түвшин" if level_index + 1 < templates.size() else "Дуусгах"
 	btn_next.visible = true
+	_update_glow()
+
+
+func _on_challenge_solved() -> void:
+	title_label.text += "   ★"
+	_offer_next()
+
+
+## Сорилтыг алгасвал 1-р хэсэг шууд дуусна (энэ бол сүүлийн, нэмэлт түвшин).
+func _on_challenge_skipped() -> void:
+	challenge.phase = "done"
+	challenge._update_bottom()
+	challenge.bus.bubble_text = "За, дараа уулзъя! Хүссэн үедээ эргэж ирж засаарай."
+	challenge._status("Сорилтыг алгаслаа.  1-р хэсэг дууслаа!  Дараа нь: 2-р хэсэг (Давталт).", 1)
+	_update_glow()
 
 
 func _on_next() -> void:
-	if busy or tut_busy or guard_view.running:
+	if busy or tut_busy or flow_busy or guard_view.running or challenge.busy:
 		return
 	if level_index + 1 < templates.size():
 		_load_level(level_index + 1)
@@ -476,6 +827,8 @@ func _refresh_code() -> void:
 		code_box.remove_child(c)
 		c.queue_free()
 	row_tokens.clear()
+	row_panels.clear()
+	var can_arrange: bool = cur.mode == "arrange" and not started
 	for i in program.size():
 		var current := started and not finished and i == interp.pc
 		var bg := ROW_BASE
@@ -490,32 +843,179 @@ func _refresh_code() -> void:
 		sb.bg_color = bg
 		sb.set_corner_radius_all(6)
 		sb.set_content_margin_all(10)
-		if cur.mode == "arrange" and not started and i == sel_index:
+		sb.border_color = YELLOW
+		if can_arrange and i == sel_index:
 			sb.set_border_width_all(3)
-			sb.border_color = YELLOW
-		var panel := PanelContainer.new()
-		panel.add_theme_stylebox_override("panel", sb)
-		panel.gui_input.connect(_on_row_input.bind(i))
+		# Мөр бүр = «слот» (VBox-д байр эзэлнэ) + доторх «карт» (харагдах мөр).
+		# Карт контейнерт захирагддаггүй тул чирэх ба гулсах анимацид чөлөөтэй хөдөлнө.
+		var card := PanelContainer.new()
+		card.add_theme_stylebox_override("panel", sb)
 		var h := HBoxContainer.new()
 		h.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		h.add_theme_constant_override("separation", 16)
-		panel.add_child(h)
+		card.add_child(h)
+		if can_arrange:
+			var grip := _code_label("≡", 30)   # «чирж болно» гэсэн бариул
+			grip.add_theme_color_override("font_color", Color(1, 1, 1, 0.35))
+			h.add_child(grip)
+			card.mouse_default_cursor_shape = Control.CURSOR_DRAG
+			card.gui_input.connect(_on_card_input.bind(card))
 		h.add_child(_code_label(("> %d" if current else "  %d") % (i + 1), 30))
 		var toks: Array = []
-		for part in str(program[i]).split(" "):
+		for part in _split_tokens(str(program[i])):
 			var l := _code_label(part, 34)
 			h.add_child(l)
 			toks.append(l)
 		row_tokens.append(toks)
-		code_box.add_child(panel)
+		var slot := Control.new()
+		slot.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		slot.set_meta("card", card)
+		slot.add_child(card)
+		code_box.add_child(slot)
+		slot.custom_minimum_size = Vector2(0, card.get_combined_minimum_size().y)
+		slot.resized.connect(_fit_card.bind(slot))
+		row_panels.append(card)
 
 
-func _on_row_input(event: InputEvent, i: int) -> void:
+## Картыг слотынхоо хэмжээнд тааруулна (чирэгдэж байх үед биш).
+func _fit_card(slot: Control) -> void:
+	var card: Control = slot.get_meta("card")
+	if not card.top_level:
+		card.position = Vector2.ZERO
+		card.size = slot.size
+
+
+func _update_selection() -> void:
+	var slots := code_box.get_children()
+	for k in slots.size():
+		var card: Control = slots[k].get_meta("card")
+		var sb: StyleBoxFlat = card.get_theme_stylebox("panel")
+		sb.set_border_width_all(3 if k == sel_index else 0)
+
+
+## Мөрийг from-оос to байр руу зөөнө. Бусад мөрүүд шинэ байр руугаа зөөлөн гулсана.
+## Хулганаар чирэх ба W/S товч хоёулаа үүнийг ашиглана.
+func _reorder(from: int, to: int) -> void:
+	if from == to:
+		return
+	var slots := code_box.get_children()
+	var old_y := {}
+	for s in slots:
+		old_y[s] = (s as Control).global_position.y
+	var line = program[from]
+	program.remove_at(from)
+	program.insert(to, line)
+	code_box.move_child(slots[from], to)
+	code_box.notification(Container.NOTIFICATION_SORT_CHILDREN)   # байрлалыг шууд шинэчилнэ
+	slots = code_box.get_children()
+	for k in slots.size():
+		var s: Control = slots[k]
+		var card: PanelContainer = s.get_meta("card")
+		_set_line_number(card, k)
+		if card == drag_card:
+			continue
+		var dy: float = old_y[s] - s.global_position.y
+		if absf(dy) > 0.5:
+			card.position.y = dy
+			var tw := create_tween()
+			tw.tween_property(card, "position:y", 0.0, 0.16).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	sel_index = to
+	_update_selection()
+
+
+func _set_line_number(card: PanelContainer, k: int) -> void:
+	var h := card.get_child(0)
+	var num: Label = h.get_child(1) if h.get_child_count() > 1 and (h.get_child(0) as Label).text == "≡" else h.get_child(0)
+	num.text = "  %d" % (k + 1)
+
+
+func _on_card_input(event: InputEvent, card: PanelContainer) -> void:
 	if cur.mode != "arrange" or started or busy:
 		return
-	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
-		sel_index = i
-		call_deferred("_refresh_code")
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+		if event.pressed:
+			drag_candidate = card
+			drag_press = event.global_position
+			sel_index = card.get_parent().get_index()
+			_update_selection()
+		else:
+			if drag_card != null:
+				_end_drag()
+			drag_candidate = null
+	elif event is InputEventMouseMotion and drag_candidate == card:
+		if drag_card == null and event.global_position.distance_to(drag_press) > 6.0:
+			_begin_drag(card, event.global_position)
+		if drag_card != null:
+			_drag_to(event.global_position)
+
+
+## Картыг «өргөнө»: сүүдэр, бага зэрэг томорно, хулганыг дагана. Хуучин байранд хоосон зай үлдэнэ.
+func _begin_drag(card: PanelContainer, mpos: Vector2) -> void:
+	drag_card = card
+	drag_grab = mpos - card.global_position
+	var gp := card.global_position
+	var sz := card.size
+	card.top_level = true
+	card.global_position = gp
+	card.size = sz
+	card.z_index = 10
+	card.pivot_offset = sz / 2.0
+	var sb: StyleBoxFlat = card.get_theme_stylebox("panel")
+	sb.shadow_color = Color(0, 0, 0, 0.55)
+	sb.shadow_size = 14
+	sb.shadow_offset = Vector2(0, 6)
+	create_tween().tween_property(card, "scale", Vector2(1.03, 1.03), 0.1)
+	# Хоосон байр (placeholder): карт хаана буух вэ гэдгийг харуулна.
+	var ghost := Panel.new()
+	ghost.name = "Ghost"
+	ghost.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var gs := StyleBoxFlat.new()
+	gs.bg_color = Color(1, 1, 1, 0.04)
+	gs.set_border_width_all(2)
+	gs.border_color = Color(1, 1, 1, 0.25)
+	gs.set_corner_radius_all(6)
+	ghost.add_theme_stylebox_override("panel", gs)
+	var slot: Control = card.get_parent()
+	slot.add_child(ghost)
+	slot.move_child(ghost, 0)
+	ghost.size = slot.size
+
+
+func _drag_to(mpos: Vector2) -> void:
+	drag_card.global_position.y = mpos.y - drag_grab.y
+	var slot: Control = drag_card.get_parent()
+	var center_y := drag_card.global_position.y + drag_card.size.y / 2.0
+	var target := 0
+	for s in code_box.get_children():
+		if s != slot and (s as Control).global_position.y + (s as Control).size.y / 2.0 < center_y:
+			target += 1
+	if target != slot.get_index():
+		_reorder(slot.get_index(), target)
+
+
+## Тавих: карт шинэ байрандаа зөөлөн суугаад сүүдэр нь арилна.
+func _end_drag() -> void:
+	var card := drag_card
+	drag_card = null
+	drag_candidate = null
+	if not is_instance_valid(card):
+		return
+	var slot: Control = card.get_parent()
+	var tw := create_tween().set_parallel(true)
+	tw.tween_property(card, "global_position", slot.global_position, 0.12).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	tw.tween_property(card, "scale", Vector2.ONE, 0.12)
+	await tw.finished
+	if not is_instance_valid(card):
+		return
+	card.top_level = false
+	card.z_index = 0
+	var sb: StyleBoxFlat = card.get_theme_stylebox("panel")
+	sb.shadow_size = 0
+	sb.shadow_offset = Vector2.ZERO
+	var ghost := slot.get_node_or_null("Ghost")
+	if ghost:
+		ghost.queue_free()
+	_fit_card(slot)
 
 
 func _refresh_boxes(vals: Dictionary, changed: String = "") -> void:
@@ -523,36 +1023,125 @@ func _refresh_boxes(vals: Dictionary, changed: String = "") -> void:
 		boxes.remove_child(c)
 		c.queue_free()
 	box_panels.clear()
+	# Түвшин 1-ийн адил шошготой хайрцаг: дээр нь нэр, доор нь int наалт.
 	for k in vals:
-		var panel := PanelContainer.new()
-		panel.custom_minimum_size = Vector2(120, 100)
-		panel.add_theme_stylebox_override("panel", _box_style())
-		var v := VBoxContainer.new()
-		panel.add_child(v)
-		var n := Label.new()
-		n.text = str(k)
-		n.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		v.add_child(n)
-		var val := Label.new()
-		val.text = "" if vals[k] == null else str(vals[k])
-		val.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		val.add_theme_font_size_override("font_size", 40)
+		var vb := _make_var_box(str(k), "" if vals[k] == null else str(vals[k]))   # утга ирээгүй хайрцаг хоосон
 		if str(k) == changed:
-			val.add_theme_color_override("font_color", YELLOW)
-		v.add_child(val)
-		boxes.add_child(panel)
-		box_panels[str(k)] = panel
+			(vb.value as Label).add_theme_color_override("font_color", YELLOW)
+		boxes.add_child(vb.stack)
+		box_panels[str(k)] = vb.panel
+
+
+## Шошготой хувьсагчийн хайрцаг: дээр нэрийн шошго, дунд нь утга, доор int наалт.
+## Буцаах: {stack, panel, value}.
+func _make_var_box(var_name: String, value_text: String, box_size := Vector2(120, 80), font_size := 40) -> Dictionary:
+	var stack := VBoxContainer.new()
+	stack.add_theme_constant_override("separation", 0)
+	var name_tag := PanelContainer.new()
+	name_tag.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	name_tag.add_theme_stylebox_override("panel", _tag_style(Color(0.12, 0.14, 0.2), Color(0.9, 0.9, 0.95)))
+	name_tag.add_child(_code_label(var_name, 22))
+	stack.add_child(name_tag)
+	var panel := PanelContainer.new()
+	panel.custom_minimum_size = box_size
+	panel.add_theme_stylebox_override("panel", _box_style())
+	var val := Label.new()
+	val.text = value_text
+	val.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	val.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	val.add_theme_font_size_override("font_size", font_size)
+	panel.add_child(val)
+	stack.add_child(panel)
+	var type_tag := PanelContainer.new()
+	type_tag.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	type_tag.add_theme_stylebox_override("panel", _tag_style(YELLOW, YELLOW))
+	var type_label := _code_label("int", 18)
+	type_label.add_theme_color_override("font_color", Color(0.1, 0.1, 0.12))
+	type_tag.add_child(type_label)
+	stack.add_child(type_tag)
+	return {"stack": stack, "panel": panel, "value": val}
+
+
+## Зөвхөн бүхэл тоо (сөрөг тэмдэгтэй байж болно) үлдээнэ.
+func _on_guess_changed(text: String) -> void:
+	var clean := ""
+	for ch in text:
+		if ch.is_valid_int() or (ch == "-" and clean == ""):
+			clean += ch
+	if clean != text:
+		var caret := guess_edit.caret_column
+		guess_edit.text = clean
+		guess_edit.caret_column = mini(caret, clean.length())
+	guess_entered = clean.is_valid_int()
+	if not finished:
+		guess_mark.text = ""   # шинэ таамаг бичиж эхлэхэд өмнөх ✗ арилна
+	_update_glow()   # таамаг орсон бол гэрэл Эхлэх товч руу шилжинэ
+
+
+## Буруу таамаг (1, 2 дахь удаа): хайрцаг сэгсрэгдэж ✗ гарна, тоонууд хэвээр, дахин бодно.
+func _reject_guess() -> void:
+	_show_message("✗  Дахин бод.  %d оролдлого үлдлээ." % (3 - wrong_tries), -1)
+	guess_mark.text = "✗"
+	guess_mark.add_theme_color_override("font_color", Color(1.0, 0.45, 0.45))
+	var x0 := guess_edit.position.x
+	var tw := create_tween()
+	for dx in [10.0, -10.0, 6.0, -4.0, 0.0]:
+		tw.tween_property(guess_edit, "position:x", x0 + dx, 0.05)
+	guess_edit.grab_focus()
+	guess_edit.select_all()   # шинэ тоо бичихэд хуучин нь солигдоно
+	_update_glow()
+
+
+## Монгол (кирилл) гарын байрлалд дээд эгнээний товч тоо биш тэмдэгт гаргадаг.
+## Иймд товчны физик байрлалаар нь тоо оруулна: ямар ч байрлалд 1-9, 0 ажиллана.
+func _on_guess_key(event: InputEvent) -> void:
+	if not (event is InputEventKey) or not event.pressed or not guess_edit.editable:
+		return
+	var pk: Key = event.physical_keycode if event.physical_keycode != KEY_NONE else event.keycode
+	var ch := ""
+	if pk >= KEY_0 and pk <= KEY_9:
+		ch = str(pk - KEY_0)
+	elif pk >= KEY_KP_0 and pk <= KEY_KP_9:
+		ch = str(pk - KEY_KP_0)
+	elif pk == KEY_MINUS or pk == KEY_KP_SUBTRACT:
+		ch = "-"
+	if ch == "":
+		return
+	if guess_edit.has_selection():
+		guess_edit.delete_text(guess_edit.get_selection_from_column(), guess_edit.get_selection_to_column())
+		guess_edit.deselect()
+	guess_edit.insert_text_at_caret(ch)
+	_on_guess_changed(guess_edit.text)
+	guess_edit.accept_event()
 
 
 func _on_start() -> void:
-	if started or busy:
+	if started or busy or drag_card != null:
 		return
+	var reveal_msg := ""
+	if cur.mode == "predict":
+		if not guess_entered:
+			_show_message("Эхлээд таамаглалаа бич.", -1)
+			return
+		# Эхлээд таамгийг програм ажиллуулалгүйгээр шалгана. Буруу бол 3 дахь удаа хүртэл хариуг нууна.
+		var ip := Interp.new()
+		ip.load_program(program)
+		while not ip.is_done():
+			ip.step()
+		var actual = ip.vars.get(cur.ask, null)
+		if actual == null or int(guess_edit.text) != actual:
+			wrong_tries += 1
+			if wrong_tries < 3:
+				_reject_guess()
+				return
+			reveal_msg = "✗  3 удаа буруу. Програмыг ажиллуулж, яагаад гэдгийг хар."
 	started = true
 	finished = false
 	interp.load_program(program)
 	states.fill(0)
-	predict_spin.editable = false
-	_show_message("Мөр бүрийг ажиллуулахын тулд Алхам, эсвэл Бүгдийг ажиллуулах товчийг дар.")
+	guess_edit.editable = false
+	guess_edit.release_focus()   # Enter/Space дараа нь гарын товчлол руу очно
+	_show_message(reveal_msg, -1 if reveal_msg != "" else 0)
 	_refresh_code()
 	_refresh_boxes({})
 	_update_buttons()
@@ -572,54 +1161,74 @@ func _on_step() -> void:
 		_show_message("%d-р мөр:  %s" % [row + 1, res.error], -1)
 	else:
 		states[row] = 2 if res.skipped else 1
-		_show_message("%d-р мөр:  %s" % [row + 1, res.note])
-		if not res.skipped and res.var != "" and not str(program[row]).begins_with("if "):
+		# Алхам бүрийн тайлбар бичиг байхгүй: анимаци өөрөө харуулна. Зөвхөн алдаа ба дүгнэлт бичигдэнэ.
+		if not res.skipped and res.var != "" and not str(program[row]).strip_edges().begins_with("if"):
 			await _animate_assign(row, old_vars, res)
 		if interp.is_done():
-			_finish()
+			await _finish()
 	_refresh_code()
 	_refresh_boxes(interp.vars, res.var)
 	busy = false
 	_update_buttons()
 
 
+## Мөрийг зайгаар хувааж, төгсгөлийн ';'-г тусдаа токен болгоно ("x = 5;" -> ["x", "=", "5", ";"]).
+func _split_tokens(line: String) -> Array:
+	var out: Array = []
+	for part in line.split(" ", false):
+		if part.length() > 1 and part.ends_with(";"):
+			out.append(part.trim_suffix(";"))
+			out.append(";")
+		else:
+			out.append(part)
+	return out
+
+
 ## Утгууд хайрцгаас кодруу нисч, үйлдэл бодогдож, үр дүн хайрцагт орно.
+## "int x = a + b;" ба "x = a + b;" хоёуланд ажиллана: '=' ба ';'-ийн хоорондох хэсгийг бодно.
 func _animate_assign(row: int, old_vars: Dictionary, res: Dictionary) -> void:
 	var toks: Array = row_tokens[row]
-	var parts: PackedStringArray = str(program[row]).split(" ")
+	var parts: Array = _split_tokens(str(program[row]))
+	var eq := parts.find("=")
+	if eq == -1:
+		return
+	var end := parts.size()
+	if parts[end - 1] == ";":
+		end -= 1
 	var target: String = res.var
 	var new_value = interp.vars[target]
-	for k in range(2, parts.size()):
+	for k in range(eq + 1, end):
 		var vn: String = parts[k]
 		if old_vars.has(vn) and box_panels.has(vn):
 			var lbl: Label = toks[k]
 			await _fly(str(old_vars[vn]), _center_of(box_panels[vn]), _center_of(lbl), false, 34)
 			lbl.text = str(old_vars[vn])
-	if parts.size() > 3:
-		await get_tree().create_timer(_t(0.5)).timeout
-		for k in range(parts.size() - 1, 2, -1):
+	if end - eq > 2:
+		await _wait(0.5)
+		for k in range(end - 1, eq + 1, -1):
 			var lbl2: Label = toks[k]
 			lbl2.get_parent().remove_child(lbl2)
 			lbl2.queue_free()
-		(toks[2] as Label).text = str(new_value)
-		await get_tree().create_timer(_t(0.4)).timeout
+		(toks[eq + 1] as Label).text = str(new_value)
+		await _wait(0.4)
 	if not box_panels.has(target):
 		var with_target := old_vars.duplicate()
 		with_target[target] = null
 		_refresh_boxes(with_target)
 		await _layout()
-	await _fly(str(new_value), _center_of(toks[2]), _center_of(box_panels[target]), true, 34)
+	await _fly(str(new_value), _center_of(toks[eq + 1]), _center_of(box_panels[target]), true, 34)
 
 
 func _on_run_all() -> void:
 	if not started or finished or busy:
 		return
+	_begin_action()
 	run_token += 1
 	var token := run_token
 	while started and not finished and token == run_token:
 		await _on_step()
 		if not finished:
-			await get_tree().create_timer(_t(0.4)).timeout
+			await _wait(0.4)
 
 
 func _on_reset() -> void:
@@ -639,35 +1248,44 @@ func _finish() -> void:
 	var text := ""
 	if cur.mode == "predict":
 		var actual = interp.vars.get(cur.ask, null)
-		var guess := int(predict_spin.value)
-		if actual != null and guess == actual:
-			solved = true
-			text = "ЗӨВ.  " + cur.hint
-		else:
-			text = "БУРУУ.  Та %d гэж таамагласан, гэвч '%s' төгсгөлд %s болсон.\n%s\nДахин эхлэх товчийг дарна уу (тоонууд шинэчлэгдэнэ)." % [guess, cur.ask, str(actual), cur.hint]
+		var guess := int(guess_edit.text)
+		solved = actual != null and guess == actual
+		# Санах ойн хайрцгаас жинхэнэ утга «Жинхэнэ» хайрцаг руу нисч, таамгийн хажууд ✓/✗ гарна.
+		real_value.text = str(actual)
+		real_col.visible = true
+		real_col.modulate.a = 0.0
+		await _layout()
+		if box_panels.has(cur.ask):
+			await _fly(str(actual), _center_of(box_panels[cur.ask]), _center_of(real_box), true, 34)
+		real_col.modulate.a = 1.0
+		guess_mark.text = "✓" if solved else "✗"
+		guess_mark.add_theme_color_override("font_color", Color(0.4, 0.9, 0.5) if solved else Color(1.0, 0.45, 0.45))
+		# Хайрцгууд утгыг харуулж байгаа тул бичиг нь зөвхөн «яагаад» гэдгийг хэлнэ.
+		text = ("ЗӨВ ✓   " if solved else "") + cur.hint
 	else:
 		var actual = interp.vars.get(cur.goal_var, null)
 		if actual != null and actual == cur.goal:
 			solved = true
-			text = "БОДЛОГО ШИЙДЛЭЭ.  " + cur.hint
+			text = "ЗӨВ ✓   " + cur.hint
 		else:
-			text = "'%s' төгсгөлд %s болсон, харин зорилт %d.  Дахин эхлэх товчийг дарж, мөрүүдийг дахин эрэмбэлээд оролд." % [cur.goal_var, str(actual), cur.goal]
+			text = "%s = %s,   зорилт: %d" % [cur.goal_var, str(actual), cur.goal]
 	_show_message(text, 1 if solved else -1)
 	if solved:
 		_offer_next()
 
 
 func _move(dir: int) -> void:
-	if started or busy or sel_index < 0:
+	if cur.mode != "arrange" or started or busy:
+		return
+	if sel_index < 0:
+		# Сонгосон мөр байхгүй бол эхний товчлол дээд мөрийг сонгоно.
+		sel_index = 0
+		_update_selection()
 		return
 	var j := sel_index + dir
-	if j < 0 or j >= program.size():
+	if j < 0 or j >= program.size() or drag_card != null:
 		return
-	var tmp = program[sel_index]
-	program[sel_index] = program[j]
-	program[j] = tmp
-	sel_index = j
-	_refresh_code()
+	_reorder(sel_index, j)
 
 
 # ---------------------------------------------------------------- хамгаалагч
@@ -699,7 +1317,7 @@ func _guard_condition() -> String:
 func _update_guard_code() -> void:
 	if guard_code == null or guard_view == null or cur.is_empty() or cur.mode != "guard":
 		return
-	guard_code.text = "if %s:\n    let_in()\nelse:\n    turn_away()" % _guard_condition()
+	guard_code.text = "if (%s) {\n    letIn();\n} else {\n    turnAway();\n}" % _guard_condition()
 	guard_view.sign_text = _guard_condition()
 
 
@@ -708,6 +1326,10 @@ func _make_crowd(t: int, two: bool) -> Array:
 	crowd.append({"age": t, "ticket": 1})
 	crowd.append({"age": t - 1, "ticket": 1})
 	crowd.append({"age": t + 1, "ticket": 1})
+	# Хилээс хол доор ба хол дээр хүн заавал байна. Ингэснээр «age != 17» мэт
+	# буруу дүрэм санамсаргүй тэнцэх боломжгүй.
+	crowd.append({"age": randi_range(8, t - 3), "ticket": 1})
+	crowd.append({"age": randi_range(t + 5, 40), "ticket": 1})
 	if two:
 		crowd.append({"age": t, "ticket": 0})
 		crowd.append({"age": t + 4, "ticket": 0})
@@ -727,6 +1349,7 @@ func _on_test() -> void:
 func _test_guard() -> void:
 	if guard_view.running:
 		return
+	_begin_action()
 	var two: bool = cur.get("rules", 1) == 2
 	var free: bool = cur.get("free", false)
 	var t: int = cur.vals.get("T", 18)
@@ -832,6 +1455,7 @@ func _cinema_customers() -> Array:
 
 func _test_cinema() -> void:
 	cin_list.clear()
+	btn_next.visible = false   # өмнө тэнцсэн ч одоогийн програм дахин шалгагдана
 	var wrong := 0
 	var edge_wrong := false
 	var coupon_wrong := false
@@ -856,11 +1480,120 @@ func _test_cinema() -> void:
 	if edge_wrong:
 		msg += "\nХилийн насуудыг (11, 12, 64, 65) шалга: < ба <= ялгаатай."
 	if coupon_wrong:
-		msg += "\nКупон: 10% хасна гэдэг нь үнийг 0.9-өөр үржүүлнэ гэсэн үг. Мөн өдрийн хөнгөлөлт ЭХЛЭЭД, купон ДАРАА."
+		msg += "\nКупон: 10% хасна гэдэг нь үнийг 0.9-өөр үржүүлнэ гэсэн үг (price = price * 0.9;). Програм өдрийн хөнгөлөлтийг ЭХЛЭЭД хасдаг, купон ДАРАА нь үйлчилдэг тул гараар бодохдоо ч энэ дарааллыг баримтал."
 	_show_message(msg, -1)
 
 
 # ---------------------------------------------------------------- нисдэг утга (анимаци)
+
+## Анимацийн бүх tween эндээс үүснэ: алгасах (F) үед ажиллаж буй ба шинэ tween-үүд хурдасна.
+func _anim_tween() -> Tween:
+	var tw := create_tween()
+	if skipping:
+		tw.set_speed_scale(SKIP_SCALE)
+	anim_tweens = anim_tweens.filter(func(t: Tween) -> bool: return t.is_valid())
+	anim_tweens.append(tw)
+	return tw
+
+
+## Хүлээх (timer-ийн оронд tween ашиглана, ингэснээр алгасах үед мөн хурдасна).
+func _wait(secs: float) -> void:
+	var tw := _anim_tween()
+	tw.tween_interval(_t(secs))
+	await tw.finished
+
+
+## Тоглогчийн шинэ үйлдэл эхлэхэд алгасах горимыг цуцална.
+func _begin_action() -> void:
+	skipping = false
+	guard_view.speed = 1.0
+	challenge.bus.speed = 1.0
+
+
+func _on_skip() -> void:
+	skipping = true
+	for tw in anim_tweens:
+		if tw.is_valid():
+			tw.set_speed_scale(SKIP_SCALE)
+	guard_view.speed = 1.0 / SKIP_SCALE   # хамгаалагчийн дараагийн хөдөлгөөнүүд хурдан
+	challenge.bus.speed = 1.0 / SKIP_SCALE
+
+
+func _on_step_pressed() -> void:
+	if not started or finished or busy:
+		return
+	_begin_action()
+	await _on_step()
+
+
+## Хөгжүүлэлтийн товчлол: F9 = дараагийн түвшин (зөвхөн debug хувилбарт; тоглоомын export-д ажиллахгүй).
+## _input ашиглана: таамгийн нүд фокустай байсан ч ажиллана.
+func _input(event: InputEvent) -> void:
+	if not (event is InputEventKey) or not event.pressed or event.echo:
+		return
+	var k: Key = event.physical_keycode if event.physical_keycode != KEY_NONE else event.keycode
+	# F11: бүтэн дэлгэц ⇄ цонх.
+	if k == KEY_F11:
+		var fs := DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_FULLSCREEN
+		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED if fs else DisplayServer.WINDOW_MODE_FULLSCREEN)
+		get_viewport().set_input_as_handled()
+		return
+	if OS.is_debug_build():
+		if k == KEY_F9:
+			if level_index + 1 < templates.size():
+				_load_level(level_index + 1)
+			get_viewport().set_input_as_handled()
+
+
+## Гарын товчлол. Товчнууд фокус авдаггүй тул эдгээр нь зөвхөн энд боловсруулагдана.
+## physical_keycode: монгол (кирилл) гарын байрлалтай ч W/S/D/F ажиллана.
+func _unhandled_input(event: InputEvent) -> void:
+	if not (event is InputEventKey) or not event.pressed:
+		return
+	var key: Key = event.physical_keycode if event.physical_keycode != KEY_NONE else event.keycode
+	var repeatable := key in [KEY_W, KEY_S, KEY_UP, KEY_DOWN]
+	if event.echo and not repeatable:
+		return
+	# Сорилт: → / D = Батаагийн дараагийн үг (эсвэл дуусгах), Enter = засъя / турших.
+	if cur.get("mode", "") == "challenge" and key in [KEY_RIGHT, KEY_D, KEY_ENTER, KEY_KP_ENTER]:
+		if key in [KEY_ENTER, KEY_KP_ENTER]:
+			challenge.key_enter()
+		elif btn_next.visible:
+			_on_next()
+		else:
+			challenge.key_next()
+		get_viewport().set_input_as_handled()
+		return
+	# Нөхцлийн тест: ← = F (худал зам), → = T (үнэн зам).
+	if cur.get("mode", "") == "flow" and flow_phase == "test" and key in [KEY_LEFT, KEY_RIGHT]:
+		_flow_choose(1 if key == KEY_RIGHT else 0)
+		get_viewport().set_input_as_handled()
+		return
+	match key:
+		KEY_RIGHT, KEY_D:
+			if btn_next.visible:
+				_on_next()
+			elif btn_tut.visible and not btn_tut.disabled:
+				_on_tut_next()
+		KEY_ENTER, KEY_KP_ENTER:
+			if btn_start.visible and not btn_start.disabled:
+				_on_start()
+			elif btn_step.visible and not btn_step.disabled:
+				_on_step_pressed()
+		KEY_SPACE:
+			if btn_run.visible and not btn_run.disabled:
+				_on_run_all()
+		KEY_F:
+			if btn_skip.visible:
+				_on_skip()
+		KEY_W, KEY_UP:
+			_move(-1)
+		KEY_S, KEY_DOWN:
+			_move(1)
+		_:
+			return
+	get_viewport().set_input_as_handled()
+
 
 func _layout() -> void:
 	await get_tree().process_frame
@@ -882,7 +1615,7 @@ func _fly(text: String, from_center: Vector2, to_center: Vector2, pulse: bool, f
 	var half := f.get_combined_minimum_size() / 2.0
 	f.pivot_offset = half
 	f.global_position = from_center - half
-	var tw := create_tween()
+	var tw := _anim_tween()
 	if pulse:
 		tw.tween_property(f, "scale", Vector2(1.5, 1.5), _t(0.25))
 		tw.tween_property(f, "scale", Vector2.ONE, _t(0.15))
@@ -898,10 +1631,15 @@ func _tut_reset() -> void:
 	tut_busy = false
 	_set_tokens([])
 	tut_box.modulate.a = 0.0
-	tut_name.modulate.a = 0.0
+	tut_name_tag.modulate.a = 0.0
+	tut_type_tag.modulate.a = 0.0
 	tut_value.text = ""
 	tut_value.modulate.a = 1.0
-	tut_caption.text = "Алхам бүрийг харахын тулд «Дараагийн алхам» товчийг дар."
+	# Оролдлого/үзэлт бүрт өөр тоо: цээжлэх биш, ойлгох.
+	tut_v = randi_range(2, 9)
+	tut_k = randi_range(1, 5)
+	tut_caption.text = ""
+	_update_glow()   # бичгийн оронд товч өөрөө «намайг дар» гэж гэрэлтэнэ
 	btn_tut.disabled = false
 	btn_next.visible = false
 
@@ -918,10 +1656,328 @@ func _tok(i: int) -> Label:
 	return code_row.get_child(i) as Label
 
 
+# ---------------------------------------------------------------- нөхцөл (flow): if / if-else блок схем
+
+func _flow_reset() -> void:
+	flow_phase = "explain"
+	flow_step = 0
+	flow_busy = false
+	flow_correct = 0
+	flow_round = 0
+	flow_op_queue.clear()
+	var t: int = cur.vals.T
+	flow_op = cur.ops[0]
+	# Тайлбарын хоёр жишээ: нэг нь үнэн (хилээс дээш), нэг нь худал (хилээс доош).
+	flow_big = t + randi_range(3, 10)
+	flow_small = maxi(1, t - randi_range(3, 10))
+	flow_input = flow_big
+	_flow_build_code(flow_op)
+	_flow_set_boxes(flow_big, 0)
+	flow_view.kind = cur.kind
+	flow_view.t_stmt = "%s = %d;" % [cur.out_var, cur.t_val]
+	flow_view.f_stmt = "%s = %d;" % [cur.out_var, cur.f_val]
+	_flow_clear_view()
+	flow_view.cond_text = "%s %s %d" % [cur.in_var, flow_op, t]
+	btn_tut.visible = true
+	btn_tut.disabled = false
+	btn_false.visible = false
+	btn_true.visible = false
+	_show_message("")
+	_update_glow()
+
+
+func _flow_clear_view() -> void:
+	flow_view.eval_state = 0
+	flow_view.active_side = -1
+	flow_view.flash_side = -1
+	flow_view.chosen_side = -1
+	flow_view.hover_side = -1
+	flow_view.choosing = false
+	flow_view.token_visible = false
+	_flow_view_numline_off()
+
+
+## Кодын мөрүүд (C++). Мөр 0 = нөхцөл, 1 = T блок, (3 = F блок ifelse-д), сүүлийнх = «}».
+func _flow_lines(op: String) -> Array:
+	var lines := [
+		"if (%s %s %d) {" % [cur.in_var, op, cur.vals.T],
+		"    %s = %d;" % [cur.out_var, cur.t_val],
+	]
+	if cur.kind == "ifelse":
+		lines.append("} else {")
+		lines.append("    %s = %d;" % [cur.out_var, cur.f_val])
+	lines.append("}")
+	return lines
+
+
+func _flow_build_code(op: String) -> void:
+	for c in flow_code.get_children():
+		flow_code.remove_child(c)
+		c.queue_free()
+	flow_rows.clear()
+	for line in _flow_lines(op):
+		var sb := StyleBoxFlat.new()
+		sb.bg_color = ROW_BASE
+		sb.set_corner_radius_all(4)
+		sb.content_margin_left = 14
+		sb.content_margin_right = 14
+		sb.content_margin_top = 2
+		sb.content_margin_bottom = 2
+		var row := PanelContainer.new()
+		row.custom_minimum_size = Vector2(440, 0)
+		row.add_theme_stylebox_override("panel", sb)
+		var h := HBoxContainer.new()
+		h.add_theme_constant_override("separation", 10)
+		row.add_child(h)
+		var indent: int = str(line).length() - str(line).lstrip(" ").length()
+		if indent > 0:
+			var sp := Control.new()
+			sp.custom_minimum_size = Vector2(indent * 9, 0)
+			h.add_child(sp)
+		for part in _split_tokens(str(line).strip_edges()):
+			h.add_child(_code_label(part, 26))
+		flow_code.add_child(row)
+		flow_rows.append(row)
+
+
+## Мөрийн өнгө: 0 энгийн, 1 ажилласан (ногоон), 2 алгассан (саарал), 3 одоогийн (шар).
+func _flow_row(i: int, state: int) -> void:
+	if i < 0 or i >= flow_rows.size():
+		return
+	var sb: StyleBoxFlat = (flow_rows[i] as Control).get_theme_stylebox("panel")
+	sb.bg_color = [ROW_BASE, ROW_DONE, ROW_SKIP, ROW_CURRENT][state]
+
+
+func _flow_set_boxes(in_v: int, out_v: int) -> void:
+	for slot in [flow_in_slot, flow_out_slot]:
+		for c in slot.get_children():
+			slot.remove_child(c)
+			c.queue_free()
+	var a := _make_var_box(cur.in_var, str(in_v), Vector2(100, 64), 32)
+	flow_in_slot.add_child(a.stack)
+	flow_in_panel = a.panel
+	flow_in_val = a.value
+	var b := _make_var_box(cur.out_var, str(out_v), Vector2(100, 64), 32)
+	flow_out_slot.add_child(b.stack)
+	flow_out_panel = b.panel
+	flow_out_val = b.value
+
+
+func _flow_eval(v: int, op: String) -> bool:
+	var e := Expression.new()
+	e.parse("%d %s %d" % [v, op, cur.vals.T])
+	return e.execute() == true
+
+
+func _flow_move_token(side: int, from_t: float, to_t: float, secs: float) -> void:
+	var tw := _anim_tween()
+	tw.tween_method(func(t: float): flow_view.token_pos = flow_view.point_on(side, t), from_t, to_t, _t(secs))
+	await tw.finished
+
+
+## Нэг удаа «компьютер шиг» ажиллуулна: утга нөхцөл рүү нисч, true/false болж, токен зөв замаар явна,
+## ажилласан блокийн утга гаралтын хайрцагт нисч орно. Буцаах: нөхцлийн үр дүн.
+func _flow_run(value: int, op: String) -> bool:
+	var t: int = cur.vals.T
+	flow_input = value
+	flow_in_val.text = str(value)
+	flow_out_val.text = "0"
+	flow_out_val.remove_theme_color_override("font_color")
+	for i in flow_rows.size():
+		_flow_row(i, 0)
+	_flow_row(0, 3)
+	var keep_choice: int = flow_view.chosen_side
+	_flow_clear_view()
+	flow_view.chosen_side = -1
+	flow_view.cond_text = "%s %s %d" % [cur.in_var, op, t]
+	var oval: Vector2 = flow_view.global_position + flow_view.cond_center()
+	await _fly(str(value), _center_of(flow_in_panel), oval, false, 30)
+	flow_view.cond_text = "%d %s %d" % [value, op, t]   # хувьсагчийн оронд утга нь орлоо
+	await _wait(0.5)
+	var res := _flow_eval(value, op)
+	flow_view.eval_state = 1 if res else 2
+	await _wait(0.5)
+	var side := 1 if res else 0
+	flow_view.active_side = side
+	flow_view.token_text = str(value)
+	flow_view.token_visible = true
+	var tb: float = flow_view.t_at_box(side)
+	await _flow_move_token(side, 0.0, tb, 0.6)
+	_flow_row(0, 1)
+	if flow_view.has_box(side):
+		flow_view.flash_side = side
+		_flow_row(1 if side == 1 else 3, 1)
+		if cur.kind == "ifelse":
+			_flow_row(3 if side == 1 else 1, 2)
+		var out_v: int = cur.t_val if side == 1 else cur.f_val
+		await _fly(str(out_v), flow_view.global_position + flow_view.box_center(side), _center_of(flow_out_panel), true, 30)
+		flow_out_val.text = str(out_v)
+		flow_out_val.add_theme_color_override("font_color", YELLOW)
+	else:
+		_flow_row(1, 2)   # if-ийн блок алгасагдлаа
+	await _flow_move_token(side, tb, 1.0, 0.5)
+	flow_view.token_visible = false
+	flow_view.chosen_side = keep_choice
+	return res
+
+
+## Тайлбар: 1) нөхцөл, 2) үнэн жишээ, 3) худал жишээ, 4) тест эхэлнэ.
+func _flow_next_step() -> void:
+	if flow_busy or flow_phase != "explain":
+		return
+	_begin_action()
+	flow_busy = true
+	btn_tut.disabled = true
+	_update_glow()
+	flow_step += 1
+	match flow_step:
+		1:
+			_flow_row(0, 3)
+			_show_message("Нөхцөл: үнэн эсвэл худал")
+			await _wait(0.2)
+		2:
+			_show_message("")
+			await _flow_run(flow_big, flow_op)
+			_show_message("Үнэн → блок ажиллана")
+		3:
+			_show_message("")
+			await _flow_run(flow_small, flow_op)
+			_show_message("Худал → алгасна" if cur.kind == "if" else "Худал → else ажиллана")
+		_:
+			# 4+: (explain_ops) оператор бүрийг тоон шулуунаар; дараа нь тест.
+			var k := flow_step - 4
+			if cur.get("explain_ops", false) and k < cur.ops.size():
+				_flow_show_op(cur.ops[k])
+				await _wait(0.3)
+			else:
+				_flow_view_numline_off()
+				flow_busy = false
+				_flow_start_test()
+				return
+	flow_busy = false
+	btn_tut.disabled = false
+	_update_glow()
+
+
+## Операторыг тоон шулуунаар үзүүлнэ: хилийн орчмын аль тоо нөхцлийг үнэн болгох вэ.
+const OP_CAPTIONS := {
+	">": "«>» их:  тэнцүү нь орохгүй",
+	">=": "«>=» их эсвэл тэнцүү:  тэнцүү нь орно",
+	"==": "«==» яг тэнцүү:  зөвхөн нэг тоо   (= нь хадгалах, == нь харьцуулах!)",
+}
+
+
+func _flow_show_op(op: String) -> void:
+	_flow_clear_view()
+	flow_op = op
+	_flow_build_code(op)
+	_flow_row(0, 3)
+	flow_view.cond_text = "%s %s %d" % [cur.in_var, op, cur.vals.T]
+	flow_view.numline_op = op
+	flow_view.numline_t = cur.vals.T
+	_show_message(OP_CAPTIONS.get(op, op))
+
+
+func _flow_view_numline_off() -> void:
+	flow_view.numline_t = -1
+	flow_view.numline_op = ""
+
+
+func _flow_start_test() -> void:
+	flow_phase = "test"
+	btn_tut.visible = false   # тестийн үед хэрэггүй; «Дахин үзэх» тайлбарыг дахин эхлүүлнэ
+	_update_glow()
+	_flow_new_round()
+
+
+func _flow_dots() -> String:
+	return "●".repeat(flow_correct) + "○".repeat(FLOW_NEED - flow_correct)
+
+
+func _flow_new_round() -> void:
+	flow_round += 1
+	var t: int = cur.vals.T
+	# Оператор бүр ээлжээр (холилдсон дарааллаар) асуугдана: 3 зөв = оператор бүрээс нэг.
+	if flow_op_queue.is_empty():
+		flow_op_queue = cur.ops.duplicate()
+		flow_op_queue.shuffle()
+	flow_op = flow_op_queue.pop_front()
+	if cur.get("explain_ops", false):
+		# Операторууд зөвхөн хил орчимд ялгагдана: T-1, T, T+1.
+		flow_input = t + randi_range(-1, 1)
+	elif flow_round == 2:
+		flow_input = t   # 2 дахь асуулт үргэлж хилийн утга
+	else:
+		flow_input = maxi(1, t + randi_range(1, 15) * (1 if randf() < 0.5 else -1))
+	_flow_build_code(flow_op)
+	_flow_row(0, 3)
+	flow_in_val.text = str(flow_input)
+	flow_out_val.text = "0"
+	flow_out_val.remove_theme_color_override("font_color")
+	_flow_clear_view()
+	flow_view.cond_text = "%s %s %d" % [cur.in_var, flow_op, t]
+	flow_view.choosing = true
+	btn_false.visible = true
+	btn_true.visible = true
+	btn_false.disabled = false
+	btn_true.disabled = false
+	# Асуулт тодорхой: оролтын утга + «үнэн үү, худал уу?» + ахиц.
+	_show_question("%s = %d  →  ҮНЭН үү, ХУДАЛ уу?        %s" % [cur.in_var, flow_input, _flow_dots()])
+
+
+## Тоглогч замаа сонгоно (товшилт эсвэл ←/→). Дараа нь компьютер жинхэнэ замаар явж ✓/✗ гарна.
+func _flow_choose(side: int) -> void:
+	if cur.get("mode", "") != "flow" or flow_phase != "test" or flow_busy:
+		return
+	_begin_action()
+	flow_busy = true
+	flow_view.choosing = false
+	flow_view.hover_side = -1
+	btn_false.disabled = true
+	btn_true.disabled = true
+	var expect := _flow_eval(flow_input, flow_op)
+	var ok := (side == 1) == expect
+	_show_message("")
+	await _flow_run(flow_input, flow_op)
+	flow_view.chosen_side = side
+	flow_view.chosen_ok = ok
+	var t: int = cur.vals.T
+	if ok:
+		flow_correct += 1
+		_show_message("✓   " + _flow_dots(), 1)
+	else:
+		var why := "✗   %d %s %d  →  %s" % [flow_input, flow_op, t, "ҮНЭН (true)" if expect else "ХУДАЛ (false)"]
+		if flow_op == "==":
+			why += "    («==» зөвхөн яг %d үед үнэн)" % t
+		elif flow_input == t:
+			if flow_op in [">", "<"]:
+				why += "    («%s» тэнцүүг оруулахгүй)" % flow_op
+			elif flow_op in [">=", "<="]:
+				why += "    («%s» тэнцүүг оруулна)" % flow_op
+		_show_message(why + "        " + _flow_dots(), -1)
+	if flow_correct >= FLOW_NEED:
+		flow_phase = "done"
+		flow_busy = false
+		btn_false.visible = false
+		btn_true.visible = false
+		_show_message("ЗӨВ ✓   " + cur.hint, 1)
+		_offer_next()
+		return
+	await _wait(1.0 if ok else 2.4)   # буруу бол тайлбарыг унших хугацаа
+	flow_busy = false
+	if cur.get("mode", "") == "flow" and flow_phase == "test":
+		_flow_new_round()
+
+
 func _on_tut_next() -> void:
+	if cur.mode == "flow":
+		await _flow_next_step()
+		return
 	if tut_busy or tut_step >= 3:
 		return
+	_begin_action()
 	tut_busy = true
+	_update_glow()
 	btn_tut.disabled = true
 	tut_step += 1
 	match tut_step:
@@ -936,45 +1992,80 @@ func _on_tut_next() -> void:
 
 
 func _on_tut_replay() -> void:
+	if cur.mode == "flow":
+		if not flow_busy:
+			_flow_reset()
+		return
 	if tut_busy:
 		return
 	_tut_reset()
 
 
-func _tut_step1() -> void:
-	_set_tokens(["int", "a"])
-	tut_caption.text = "int a  -  «a» нэртэй хоосон хайрцаг үүснэ."
-	await _layout()
-	var tw := create_tween().set_parallel(true)
-	tw.tween_property(tut_box, "modulate:a", 1.0, _t(0.6))
-	tw.tween_property(tut_name, "modulate:a", 1.0, _t(0.6))
+
+
+func _fade_in(c: Control, secs: float = 0.4) -> void:
+	var tw := _anim_tween()
+	tw.tween_property(c, "modulate:a", 1.0, _t(secs))
 	await tw.finished
 
 
-func _tut_step2() -> void:
-	_set_tokens(["a", "=", "2"])
-	tut_caption.text = "a = 2  -  2 гэсэн утга хуулагдан хайрцагт хадгалагдана."
+func _mark(i: int, on: bool) -> void:
+	if on:
+		_tok(i).add_theme_color_override("font_color", YELLOW)
+	else:
+		_tok(i).remove_theme_color_override("font_color")
+
+
+## int a;  ->  'int' төрлийн наалт болж, 'a' нэрийн шошго болж, дотор нь '?'.
+func _tut_step1() -> void:
+	_set_tokens(["int", "a", ";"])
+	tut_caption.text = ""
 	await _layout()
-	await _fly("2", _center_of(_tok(2)), _center_of(tut_box), true)
-	tut_value.text = "2"
+	_mark(0, true)
+	await _fade_in(tut_box)
+	await _fly("int", _center_of(_tok(0)), _center_of(tut_type_tag), false, 40)
+	await _fade_in(tut_type_tag, 0.2)
+	_mark(0, false)
+	_mark(1, true)
+	await _fly("a", _center_of(_tok(1)), _center_of(tut_name_tag), false, 40)
+	await _fade_in(tut_name_tag, 0.2)
+	_mark(1, false)
+	# Хайрцаг хоосон харагдана. Тайлбар нь «утга өгөөгүй» гэж үнэнээр хэлнэ
+	# (C++-д утга өгөөгүй хувьсагчийг уншвал алдаа гэдгийг дараагийн түвшнүүдэд Interp тайлбарлана).
+	tut_caption.text = "Хайрцаг бэлэн, утга өгөөгүй"
+
+
+func _tut_step2() -> void:
+	_set_tokens(["a", "=", str(tut_v), ";"])
+	tut_caption.text = ""
+	await _layout()
+	_mark(2, true)
+	await _fly(str(tut_v), _center_of(_tok(2)), _center_of(tut_box), true)
+	tut_value.text = str(tut_v)
+	tut_caption.text = "%d хадгалагдлаа" % tut_v
 
 
 func _tut_step3() -> void:
-	_set_tokens(["a", "=", "a", "+", "1"])
-	tut_caption.text = "a = a + 1  -  Энд '=' нь «тэнцүү» биш. Энэ нь '<-' буюу «шинэ утга өгөх» гэсэн үг. Эхлээд баруун тал бодогдож, дараа нь үр дүн хайрцагт орно."
+	_set_tokens(["a", "=", "a", "+", str(tut_k), ";"])
+	tut_caption.text = ""
 	await _layout()
-	_tok(1).add_theme_color_override("font_color", YELLOW)
-	await get_tree().create_timer(_t(1.5)).timeout
+	# '=' түр '←' болж хувирна: «тэнцүү» биш, «хайрцагт хийх» гэсэн үг.
+	_mark(1, true)
+	_tok(1).text = "←"
+	tut_caption.text = "«=» нь «хийх, олгох»"
+	await _wait(1.5)
+	_tok(1).text = "="
 	# 2 хайрцгаас кодын хоёр дахь 'a' руу нисэж, түүнийг сольно.
 	# (Хайрцагт бүдэг 2 үлдэнэ: хайрцгийг унших нь утгыг хуулдаг, шинэ утга ирэх хүртэл хэвээр байна.)
 	tut_value.modulate.a = 0.3
-	await _fly("2", _center_of(tut_box), _center_of(_tok(2)), false)
-	_tok(2).text = "2"
-	await get_tree().create_timer(_t(1.0)).timeout
-	_set_tokens(["a", "=", "3"])
+	await _fly(str(tut_v), _center_of(tut_box), _center_of(_tok(2)), false)
+	_tok(2).text = str(tut_v)
+	await _wait(1.0)
+	_set_tokens(["a", "=", str(tut_v + tut_k), ";"])
 	await _layout()
 	_tok(1).add_theme_color_override("font_color", YELLOW)
-	await get_tree().create_timer(_t(0.8)).timeout
-	await _fly("3", _center_of(_tok(2)), _center_of(tut_box), true)
-	tut_value.text = "3"
+	await _wait(0.8)
+	await _fly(str(tut_v + tut_k), _center_of(_tok(2)), _center_of(tut_box), true)
+	tut_value.text = str(tut_v + tut_k)
 	tut_value.modulate.a = 1.0
+	tut_caption.text = "Хуучин %d → шинэ %d" % [tut_v, tut_v + tut_k]
