@@ -13,9 +13,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## 2. Running and Building
 - Engine: Godot **4.7** (`config/features` in `project.godot`). Verify before using version-specific APIs.
 - Run: open the folder in the Godot editor and press F5, or `godot --path .` (editor: `godot -e --path .`).
-- Export (Windows preset in `export_presets.cfg`, PCK embedded): `godot --headless --path . --export-release "Windows Desktop" "Logic Questv3.exe"`. The committed `Logic Questv3.exe` / `.console.exe` are build outputs.
+- Godot is not on PATH. On the developer's main PC it is `D:\Rdownloads\Godot_v4.7.2-stable_win64.exe`; on another PC, ask where it is. The export templates for 4.7.2 must be installed.
+- After adding a new `class_name` script, run `godot --headless --path . --import` once, or other scripts can't find the class.
 - Headless check that all scripts load: `godot --headless --path . --quit-after 300` (no output except the godot_ai line means no script errors).
-- There is no test suite or linter in the repo. Verify changes by running the game, or by driving `main.tscn` from a temporary `extends SceneTree` script run with `godot --headless --path . -s <script>`. Keep such scripts outside the repo unless asked. The `godot-ai` MCP tools (`project_run`, `editor_screenshot`, `logs_read`, etc.) can drive the editor through the `addons/godot_ai` plugin.
+- **Testing:** there is no test suite in the repo. Verify by driving `main.tscn` from a temporary `extends SceneTree` script (`godot --headless --path . -s <script>`): instantiate the scene, call `_load_level(i)` and the handlers directly, and print PASS/FAIL. Keep such scripts outside the repo (session scratchpad). For a visual check, take screenshots from a short windowed run: `godot --path . --windowed --resolution 1152x648 -s <script>`, then save `root.get_texture().get_image()` to PNG. `--windowed` is needed because the game starts fullscreen. Headless mode does no GUI hit-testing, so real mouse clicks can't be tested headless. The editor-embedded game pauses when its window is in the background, so screenshots through the godot-ai MCP tools can come out stale.
+- **Release (Windows):** `godot --headless --path . --export-release "Windows Desktop" "build/LogicQuest.exe"`, zip it as `build/LogicQuest-vX.Y-windows.zip`, tag `vX.Y` on `main`, then `gh release create vX.Y <zip> --title "Logic Quest vX.Y" --notes-file <notes> --verify-tag`. `build/`, `*.exe` and `*.zip` are git-ignored, so never commit builds. Release notes are in Mongolian. `gh` must be logged in on the PC (`gh auth login`; on Windows it may only be reachable by its full path `C:\Program Files\GitHub CLI\gh.exe` until VS Code restarts).
+- Dev shortcut: **F9** skips to the next level (debug builds only). F11 toggles fullscreen.
 
 ## 3. Where Project Knowledge Lives
 - This file holds **permanent development instructions** only.
@@ -89,5 +92,18 @@ Logic Quest must successfully combine three things:
 - Never write multi-sentence popups or text boxes to explain mechanics.
 - Teach new coding/algorithm concepts through progressive disclosure (one mechanic per micro-level), step-by-step execution highlighting, and visual ghost previews.
 - Put optional detailed explanations behind a `?` Hint button rather than forcing them on screen.
+- Highlight what the player should interact with next (the pulsing yellow glow, `_update_glow()` in `main.gd`) instead of writing "press X" instructions.
+- Keep the box metaphor consistent: a variable is a box with a name tag on top and a yellow `int` tag below, in every level and in the challenge editor.
+- No emoji in the UI. They render as colored images that clash with the flat style; use plain symbols (`»`, `✓`, `✗`, `←`, `→`, `◇`).
+- Text must fit the 1152×648 base screen. Check new screens with a screenshot before calling them done.
+
+## 12. Working With the Developer
+- The developer is a Mongolian CS student building this as a graduation project. Explanations to them are in English, short and concrete. Player-facing text stays Mongolian.
+- **Design first, then build.** For anything new (a level, mechanic, or layout), first show 2–3 concrete options, ideally with an ASCII mock-up, and let the developer choose. The developer often sketches ideas: follow the sketch's structure and fill in the details.
+- Keep changes scoped to what was asked (e.g. "only level 1", "only until level 5"); do not touch other levels on the side.
+- Answers must not be revealed too early: a wrong attempt gives a hint, and the correct value appears only from the 3rd failed try.
+- Every level should feel interactive, not like reading. Prefer "the player does it, then sees the result animated" over explanations.
+- After each change: run the headless tests, take a screenshot of new or changed screens, update `PROJECT_CONTEXT.md` (sections 13–18), and summarize what changed and what still needs a real play-test.
+- Commit or push only when asked. Remote: `github.com/Jaydenvodkananana/logic-quest`. Don't commit the `addons/godot_ai/` self-update changes unless asked.
 
 Always consider the educational purpose behind every technical decision.
