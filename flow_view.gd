@@ -6,10 +6,10 @@ extends Control
 
 signal side_chosen(side: int)   # 0 = F (зүүн), 1 = T (баруун)
 
-const LINE := Color(0.55, 0.58, 0.66)
-const GREEN := Color(0.4, 0.9, 0.5)
-const RED := Color(1.0, 0.45, 0.45)
-const YELLOW := Color(1.0, 0.85, 0.3)
+const LINE := UiTheme.INK2
+const GREEN := UiTheme.TRUE
+const RED := UiTheme.FALSE
+const YELLOW := UiTheme.GLOW
 const BOX_W := 200.0
 const BOX_H := 46.0
 
@@ -50,7 +50,7 @@ func cond_center() -> Vector2:
 
 
 func _rx() -> float:
-	return 120.0
+	return 150.0   # нөхцлийн ромбын хагас өргөн
 
 
 func _branch_x(side: int) -> float:
@@ -141,30 +141,26 @@ static func op_true(v: int, op: String, t: int) -> bool:
 	return false
 
 
-## Нөхцлийн зууван (үнэн бол ногоон, худал бол улаан).
+## Нөхцлийн ромб (блок схемийн «шийдвэр»): үнэн бол ногоон, худал бол улаан.
 func _draw_oval(mf: Font) -> void:
 	var c := cond_center()
-	var pts := PackedVector2Array()
-	for k in 32:
-		var a := TAU * k / 32.0
-		pts.append(c + Vector2(cos(a) * _rx(), sin(a) * 24.0))
-	var oval_fill := Color(0.13, 0.15, 0.2)
+	var hh := 27.0
+	var pts := PackedVector2Array([c + Vector2(0, -hh), c + Vector2(_rx(), 0), c + Vector2(0, hh), c + Vector2(-_rx(), 0)])
+	var fill := UiTheme.COND_ACC.lerp(Color.WHITE, 0.82)
 	if eval_state == 1:
-		oval_fill = Color(0.12, 0.32, 0.18)
+		fill = UiTheme.TRUE_BG
 	elif eval_state == 2:
-		oval_fill = Color(0.42, 0.14, 0.14)
-	draw_colored_polygon(pts, oval_fill)
-	pts.append(pts[0])
-	draw_polyline(pts, Color(0.9, 0.9, 0.95), 3.0, true)
+		fill = UiTheme.FALSE_BG
+	UiTheme.poly(self, pts, fill, true, true, 2.5)
 	var txt := cond_text
-	var col := Color.WHITE
+	var col := UiTheme.INK
 	if eval_state == 1:
 		txt += "  → true"
-		col = GREEN
+		col = GREEN.darkened(0.2)
 	elif eval_state == 2:
 		txt += "  → false"
-		col = RED
-	draw_string(mf, Vector2(c.x - _rx(), c.y + 8.0), txt, HORIZONTAL_ALIGNMENT_CENTER, _rx() * 2.0, 22, col)
+		col = RED.darkened(0.1)
+	UiTheme.text_in(self, Rect2(c - Vector2(_rx(), hh), Vector2(_rx() * 2.0, hh * 2.0)), txt, 20, col, mf)
 
 
 ## Тоон шулуун: хилийн орчмын тоонууд, нөхцлийг үнэн болгодог нь ногоон.
@@ -177,16 +173,18 @@ func _draw_numline(font: Font, mf: Font) -> void:
 		var v := numline_t + k
 		var p := Vector2(cx + k * step, y)
 		var on := op_true(v, numline_op, numline_t)
-		draw_circle(p, 25.0, Color(0.12, 0.32, 0.18) if on else Color(0.16, 0.17, 0.22))
-		draw_arc(p, 25.0, 0.0, TAU, 32, GREEN if on else LINE, 3.0 if on else 2.0)
 		if k == 0:
-			draw_arc(p, 31.0, 0.0, TAU, 32, YELLOW, 2.0)   # хилийн утга
-		draw_string(mf, p + Vector2(-30.0, 8.0), str(v), HORIZONTAL_ALIGNMENT_CENTER, 60.0, 22, Color.WHITE)
-		draw_string(font, p + Vector2(-40.0, 52.0), "үнэн" if on else "худал", HORIZONTAL_ALIGNMENT_CENTER, 80.0, 16, GREEN if on else Color(1, 1, 1, 0.35))
+			draw_arc(p, 32.0, 0.0, TAU, 40, YELLOW.darkened(0.1), 4.0, true)   # хилийн утга
+		UiTheme.circ(self, p, 25.0, UiTheme.TRUE_BG if on else UiTheme.CARD)
+		if on:
+			draw_arc(p, 25.0, 0.0, TAU, 40, GREEN, 3.0, true)
+		UiTheme.text_in(self, Rect2(p - Vector2(30, 25), Vector2(60, 50)), str(v), 22, UiTheme.INK, mf)
+		UiTheme.text_in(self, Rect2(p + Vector2(-40, 32), Vector2(80, 24)), "үнэн" if on else "худал", 16,
+			GREEN.darkened(0.2) if on else UiTheme.MUTED, UiTheme.font("bold"))
 
 
 func _draw() -> void:
-	var font := get_theme_default_font()
+	var font := UiTheme.font("bold")
 	var mf: Font = mono if mono != null else font
 	if numline_t >= 0:
 		_draw_oval(mf)
@@ -204,31 +202,33 @@ func _draw() -> void:
 			col.a = 0.95 if strong else 0.25 + 0.35 * pulse
 			draw_polyline(path(side), col, 9.0 if strong else 7.0, true)
 	if active_side != -1:
+		draw_polyline(path(active_side), UiTheme.INK, 8.0, true)
 		draw_polyline(path(active_side), YELLOW, 5.0, true)
 	# T / F шошго (үнэн / худал гэсэн монгол утгатай нь)
 	var c := cond_center()
-	draw_string(font, c + Vector2(_rx() + 12.0, -10.0), "T  үнэн", HORIZONTAL_ALIGNMENT_LEFT, -1, 20, GREEN)
-	draw_string(font, c + Vector2(-_rx() - 112.0, -10.0), "худал  F", HORIZONTAL_ALIGNMENT_RIGHT, 100.0, 20, RED)
+	UiTheme.chip_text(self, c + Vector2(_rx() + 52.0, -16.0), "T  үнэн", 15, GREEN, Color.WHITE, font, 0)
+	UiTheme.chip_text(self, c + Vector2(-_rx() - 52.0, -16.0), "худал  F", 15, RED, Color.WHITE, font, 0)
 	# Нийлэх цэг
-	draw_circle(Vector2(size.x / 2.0, size.y - 34.0), 6.0, LINE)
+	UiTheme.circ(self, Vector2(size.x / 2.0, size.y - 34.0), 6.0, UiTheme.INK2, false, false)
 	# Блокийн хайрцгууд
 	for side in [0, 1]:
 		if not has_box(side):
 			continue
 		var bc := box_center(side)
 		var r := Rect2(bc - Vector2(BOX_W, BOX_H) / 2.0, Vector2(BOX_W, BOX_H))
-		var fill := Color(0.12, 0.3, 0.18) if flash_side == side else Color(0.13, 0.15, 0.2)
-		draw_rect(r, fill)
-		draw_rect(r, Color(0.9, 0.9, 0.95), false, 3.0)
+		var ran: bool = flash_side == side
+		draw_style_box(UiTheme.paper(UiTheme.TRUE_BG if ran else UiTheme.CARD, 8, 3 if ran else 2,
+			GREEN if ran else UiTheme.INK, 4), r)
+		draw_rect(Rect2(r.position + Vector2(3, 3), Vector2(6, r.size.y - 6)), UiTheme.VAR_ACC)
 		var stmt := t_stmt if side == 1 else f_stmt
-		draw_string(mf, Vector2(r.position.x, bc.y + 8.0), stmt, HORIZONTAL_ALIGNMENT_CENTER, BOX_W, 22, Color.WHITE)
+		UiTheme.text_in(self, r, stmt, 20, UiTheme.INK, mf)
 	_draw_oval(mf)
 	# Тоглогчийн сонголтын тэмдэг
 	if chosen_side != -1:
 		var mark := "✓" if chosen_ok else "✗"
-		var mp := Vector2(_branch_x(chosen_side) + (34.0 if chosen_side == 1 else -60.0), c.y + 8.0)
+		var mp := Vector2(_branch_x(chosen_side) + (34.0 if chosen_side == 1 else -60.0), c.y + 46.0)
 		draw_string(font, mp, mark, HORIZONTAL_ALIGNMENT_LEFT, -1, 30, GREEN if chosen_ok else RED)
 	# Утгын токен
 	if token_visible:
-		draw_circle(token_pos, 20.0, YELLOW)
-		draw_string(mf, token_pos + Vector2(-30.0, 7.0), token_text, HORIZONTAL_ALIGNMENT_CENTER, 60.0, 20, Color(0.1, 0.1, 0.12))
+		UiTheme.circ(self, token_pos, 20.0, YELLOW)
+		UiTheme.text_in(self, Rect2(token_pos - Vector2(30, 20), Vector2(60, 40)), token_text, 18, UiTheme.INK, mf)

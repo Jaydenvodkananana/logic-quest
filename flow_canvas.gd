@@ -13,8 +13,8 @@ const BOX_W := 170.0       # хувьсагчийн хайрцгийн өргө�
 const BOX_H := 34.0        # хайрцгийн өндөр
 const TAG_H := 22.0        # нэрийн шошго
 const PILL_H := 18.0       # «int» наалт
-const IF_W := 240.0
-const IF_H := 38.0
+const IF_W := 280.0       # нөхцлийн ромб
+const IF_H := 46.0
 const IN_W := 220.0        # оролтын параллелограмм
 const IN_H := 32.0
 const GAP := 24.0          # сумны урт (блок хооронд)
@@ -22,11 +22,11 @@ const BR_GAP := 36.0       # T ба F салааны хоорондох зай
 const MARGIN := 24.0
 const TERM_W := 120.0
 const TERM_H := 30.0
-const LINE := Color(0.6, 0.63, 0.7)
-const YELLOW := Color(1.0, 0.85, 0.3)
-const GREEN := Color(0.4, 0.9, 0.5)
-const RED := Color(1.0, 0.45, 0.45)
-const BG := Color(0.09, 0.1, 0.14)
+const LINE := UiTheme.INK2
+const YELLOW := UiTheme.GLOW
+const GREEN := UiTheme.TRUE
+const RED := UiTheme.FALSE
+const BG := UiTheme.CARD
 
 var model: Array = []
 var inputs_text := "Оролт:  age, card"
@@ -55,6 +55,7 @@ var hover_arrow := -1
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_STOP
+	tooltip_text = "Дугуй: томруулах · Дунд товч: зөөх"
 	clip_contents = true
 	resized.connect(func():
 		if _need_center:
@@ -157,8 +158,8 @@ func _layout_block(list: Array, i: int, cx: float, y: float) -> float:
 	var ys := y + IF_H + 6.0
 	lines.append(PackedVector2Array([Vector2(cx + IF_W / 2.0, mid), Vector2(xt, mid), Vector2(xt, ys)]))
 	lines.append(PackedVector2Array([Vector2(cx - IF_W / 2.0, mid), Vector2(xf, mid), Vector2(xf, ys)]))
-	labels.append([Vector2(cx + IF_W / 2.0 + 6.0, mid - 6.0), "T", GREEN])
-	labels.append([Vector2(cx - IF_W / 2.0 - 18.0, mid - 6.0), "F", RED])
+	labels.append([Vector2(cx + IF_W / 2.0 + 16.0, mid - 12.0), "T", GREEN])
+	labels.append([Vector2(cx - IF_W / 2.0 - 16.0, mid - 12.0), "F", RED])
 	var end_t := _layout_list(b.then, xt, ys, true)
 	if b.then.is_empty():
 		empties.append(Vector2(xt + 10.0, ys + GAP / 2.0 + 5.0))
@@ -335,80 +336,91 @@ func _arrow(a: Vector2, b: Vector2, col: Color, w: float) -> void:
 
 
 func _pill(r: Rect2, fill: Color) -> void:
-	draw_rect(Rect2(r.position + Vector2(r.size.y / 2.0, 0), Vector2(r.size.x - r.size.y, r.size.y)), fill)
-	draw_circle(r.position + Vector2(r.size.y / 2.0, r.size.y / 2.0), r.size.y / 2.0, fill)
-	draw_circle(r.end - Vector2(r.size.y / 2.0, r.size.y / 2.0), r.size.y / 2.0, fill)
+	draw_style_box(UiTheme.paper(fill, r.size.y / 2.0, 2, UiTheme.INK, 3), r)
 
 
-## Хувьсагчийн блок: [нэрийн шошго] / [утгын хайрцаг] / [int] (int нь зөвхөн зарлахад).
-func _draw_var_block(font: Font, mf: Font, b: Dictionary, r: Rect2, sel: bool) -> void:
-	var border := YELLOW if sel else Color(0.9, 0.9, 0.95)
+## Хувьсагчийн блок: [нэрийн шошго] / [картон хайрцаг] / [int] (int нь зөвхөн зарлахад).
+func _draw_var_block(_font: Font, mf: Font, b: Dictionary, r: Rect2, sel: bool) -> void:
 	var vname := str(b.var)
 	var tw := maxf(44.0, mf.get_string_size(vname, HORIZONTAL_ALIGNMENT_LEFT, -1, 15).x + 20.0)
-	var tag := Rect2(r.get_center().x - tw / 2.0, r.position.y, tw, TAG_H)
-	draw_rect(tag, Color(0.12, 0.14, 0.2))
-	draw_rect(tag, border, false, 2.0)
-	draw_string(mf, Vector2(tag.position.x, tag.position.y + 16), vname, HORIZONTAL_ALIGNMENT_CENTER, tw, 15, Color.WHITE)
 	var box := Rect2(r.position.x, r.position.y + TAG_H - 2.0, r.size.x, BOX_H)
-	draw_rect(box, Color(0.13, 0.15, 0.2))
-	draw_rect(box, border, false, 3.0 if sel else 2.5)
+	if sel:
+		draw_style_box(UiTheme.paper(Color(0, 0, 0, 0), 12, 4, YELLOW.darkened(0.1), 0), box.grow(5))
+	draw_style_box(UiTheme.paper(UiTheme.BOX, 8, 2, UiTheme.INK, 4), box)
 	var val := str(b.expr)
 	if b.t == "assign":
 		val = "← " + val   # хайрцагт шинэ утга хийнэ
-	draw_string(mf, Vector2(box.position.x, box.position.y + 23), val, HORIZONTAL_ALIGNMENT_CENTER, box.size.x, 17, Color.WHITE)
+	UiTheme.text_in(self, box, val, 17, UiTheme.INK, mf)
+	var tag := Rect2(r.get_center().x - tw / 2.0, r.position.y, tw, TAG_H)
+	draw_style_box(UiTheme.paper(UiTheme.CARD, 6, 2, UiTheme.INK, 0), tag)
+	UiTheme.text_in(self, tag, vname, 15, UiTheme.INK, mf)
 	if b.t == "decl":
-		var pill := Rect2(r.get_center().x - 22.0, box.end.y - 1.0, 44.0, PILL_H)
-		_pill(pill, YELLOW)
-		draw_string(mf, Vector2(pill.position.x, pill.position.y + 14), "int", HORIZONTAL_ALIGNMENT_CENTER, pill.size.x, 13, Color(0.1, 0.1, 0.12))
+		var pill := Rect2(r.get_center().x - 22.0, box.end.y - 3.0, 44.0, PILL_H)
+		draw_style_box(UiTheme.paper(UiTheme.INT_TAG, PILL_H / 2.0, 2, UiTheme.INK, 0), pill)
+		UiTheme.text_in(self, pill, "int", 13, UiTheme.INK, mf)
 
 
 func _draw() -> void:
-	var font := get_theme_default_font()
+	var font := UiTheme.font("bold")
 	var mf: Font = mono if mono else font
+	# Цаасан самбар + цэгэн тор (зөөхөд тор хамт хөдөлнө).
 	draw_rect(Rect2(Vector2.ZERO, size), BG)
+	var step := 22.0 * zoom
+	var yy := fposmod(pan.y, step)
+	while yy < size.y:
+		var xx := fposmod(pan.x, step)
+		while xx < size.x:
+			draw_circle(Vector2(xx, yy), 1.1, Color("E9E1D2"))
+			xx += step
+		yy += step
 	draw_set_transform(pan, 0.0, Vector2(zoom, zoom))
 	for pl in lines:
 		draw_polyline(pl, LINE, 2.0, true)
 	for k in arrows.size():
 		var ar: Dictionary = arrows[k]
 		if k == hover_arrow:
-			_arrow(ar.a, ar.b, YELLOW, 4.0)
-			draw_circle((ar.a + ar.b) / 2.0, 9.0, YELLOW)
-			draw_string(font, (ar.a + ar.b) / 2.0 + Vector2(-5, 6), "+", HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(0.1, 0.1, 0.1))
+			_arrow(ar.a, ar.b, YELLOW.darkened(0.15), 4.0)
+			var mc: Vector2 = (ar.a + ar.b) / 2.0
+			UiTheme.circ(self, mc, 10.0, YELLOW, true, false)
+			UiTheme.text_in(self, Rect2(mc - Vector2(10, 10), Vector2(20, 20)), "+", 16, UiTheme.INK, font)
 		else:
 			_arrow(ar.a, ar.b, LINE, 2.0)
 	for e in empties:
-		draw_string(mf, e, "// ???", HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(1, 0.55, 0.4, 0.9))
+		# Хоосон салаа: тасархай «энд блок тавина» байр.
+		var er := Rect2(e + Vector2(-4, -15), Vector2(64, 22))
+		var cs := [er.position, Vector2(er.end.x, er.position.y), er.end, Vector2(er.position.x, er.end.y)]
+		for k in 4:
+			draw_dashed_line(cs[k], cs[(k + 1) % 4], UiTheme.INK2, 2.0, 6.0)
+		UiTheme.text_in(self, er, "???", 14, UiTheme.HILITE, mf)
 	for t in terms:
 		var r: Rect2 = t[0]
-		_pill(r, Color(0.2, 0.22, 0.3))
-		draw_string(font, Vector2(r.position.x, r.position.y + 21), t[1], HORIZONTAL_ALIGNMENT_CENTER, r.size.x, 15, Color(0.85, 0.88, 0.95))
+		_pill(r, UiTheme.SAND)
+		UiTheme.text_in(self, r, t[1], 15, UiTheme.INK, font)
 	# Оролт (параллелограмм): зорчигч бүрийн age, card энд програмд орж ирнэ.
 	var ir := input_rect
 	var sk := 14.0
 	var para := PackedVector2Array([ir.position + Vector2(sk, 0), Vector2(ir.end.x, ir.position.y), ir.end - Vector2(sk, 0), Vector2(ir.position.x, ir.end.y)])
-	draw_colored_polygon(para, Color(0.12, 0.22, 0.3))
-	para.append(para[0])
-	draw_polyline(para, Color(0.5, 0.8, 1.0), 2.0, true)
-	draw_string(mf, Vector2(ir.position.x, ir.position.y + 21), inputs_text, HORIZONTAL_ALIGNMENT_CENTER, ir.size.x, 15, Color(0.75, 0.9, 1.0))
+	UiTheme.poly(self, para, Color("DCEBFF"))
+	UiTheme.text_in(self, ir, inputs_text, 15, UiTheme.INK, mf)
 	for n in nodes:
 		var b: Dictionary = n.block
 		var r: Rect2 = n.rect
 		var sel: bool = selected != null and is_same(selected, b)
 		if b.t == "if":
 			var c := r.get_center()
-			var pts := PackedVector2Array()
-			for k in 32:
-				var a := TAU * k / 32.0
-				pts.append(c + Vector2(cos(a) * r.size.x / 2.0, sin(a) * r.size.y / 2.0))
-			draw_colored_polygon(pts, Color(0.16, 0.15, 0.08))
-			pts.append(pts[0])
-			draw_polyline(pts, Color.WHITE if sel else YELLOW, 3.0 if sel else 2.0, true)
-			draw_string(mf, Vector2(r.position.x, c.y + 6), _node_text(b), HORIZONTAL_ALIGNMENT_CENTER, r.size.x, 16, Color.WHITE)
+			var hw := r.size.x / 2.0
+			var hh := r.size.y / 2.0
+			var pts := PackedVector2Array([c + Vector2(0, -hh), c + Vector2(hw, 0), c + Vector2(0, hh), c + Vector2(-hw, 0)])
+			if sel:
+				var o := PackedVector2Array([c + Vector2(0, -hh - 6), c + Vector2(hw + 10, 0), c + Vector2(0, hh + 6), c + Vector2(-hw - 10, 0), c + Vector2(0, -hh - 6)])
+				draw_polyline(o, YELLOW.darkened(0.1), 4.0, true)
+			UiTheme.poly(self, pts, UiTheme.COND_ACC.lerp(Color.WHITE, 0.8))
+			UiTheme.text_in(self, r, _node_text(b), 15, UiTheme.INK, mf)
 		else:
 			_draw_var_block(font, mf, b, r, sel)
 	for l in labels:
-		draw_string(font, l[0], l[1], HORIZONTAL_ALIGNMENT_LEFT, -1, 15, l[2])
-	# Дэлгэцийн булан: томруулалт ба удирдлагын сануулга (томруулалтаас хамаарахгүй).
+		UiTheme.chip_text(self, l[0], l[1], 12, l[2], Color.WHITE, font, 0)
+	# Томруулалт (баруун доод буланд). Удирдлагын тайлбар нь tooltip-д.
 	draw_set_transform_matrix(Transform2D())
-	draw_string(font, Vector2(10, size.y - 10), "%d%%   ·   дугуй: томруулах   ·   дунд товч: зөөх" % roundi(zoom * 100.0), HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(1, 1, 1, 0.4))
+	draw_string(font, Vector2(size.x - 56, size.y - 10), "%d%%" % roundi(zoom * 100.0), HORIZONTAL_ALIGNMENT_RIGHT, 46, 13, UiTheme.MUTED)
+	draw_style_box(UiTheme.paper(Color(0, 0, 0, 0), 6, 2, UiTheme.INK, 0), Rect2(Vector2.ZERO, size))

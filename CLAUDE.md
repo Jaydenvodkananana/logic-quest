@@ -96,6 +96,7 @@ Logic Quest must successfully combine three things:
 - Keep the box metaphor consistent: a variable is a box with a name tag on top and a yellow `int` tag below, in every level and in the challenge editor.
 - No emoji in the UI. They render as colored images that clash with the flat style; use plain symbols (`»`, `✓`, `✗`, `←`, `→`, `◇`).
 - Text must fit the 1152×648 base screen. Check new screens with a screenshot before calling them done.
+- Visual identity is «Paper Diorama» (chosen 2026-11-27): take every colour, font and panel/button style from `ui_theme.gd` (`UiTheme`); don't hard-code new colours in other scripts. Code stays on dark panels; everything else is cream paper with ink outlines. No narrator or dialogue: Bataa is only a silent mascot.
 
 ## 12. Working With the Developer
 - The developer is a Mongolian CS student building this as a graduation project. Explanations to them are in English, short and concrete. Player-facing text stays Mongolian.

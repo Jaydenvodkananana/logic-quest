@@ -2,12 +2,13 @@ extends Control
 ## Logic Quest - 1-р хэсэг. UI бүхлээрээ кодоор бүтдэг.
 
 const OPS := [">", ">=", "<", "<=", "==", "!="]
-const ROW_BASE := Color(0.13, 0.15, 0.2)
-const ROW_CURRENT := Color(0.45, 0.38, 0.1)
-const ROW_DONE := Color(0.12, 0.3, 0.18)
-const ROW_SKIP := Color(0.25, 0.25, 0.28)
-const ROW_ERR := Color(0.5, 0.15, 0.15)
-const YELLOW := Color(1.0, 0.85, 0.3)
+# Кодын мөрийн өнгө (харанхуй код самбар дээр). Бусад өнгө UiTheme-д.
+const ROW_BASE := Color("282B42")
+const ROW_CURRENT := Color("3A3B4A")
+const ROW_DONE := Color("223A31")
+const ROW_SKIP := Color("2A2C3A")
+const ROW_ERR := Color("4A2430")
+const YELLOW := UiTheme.GLOW
 
 var templates: Array = Levels.get_levels()
 var level_index := 0
@@ -25,7 +26,19 @@ var row_tokens: Array = []
 var box_panels: Dictionary = {}
 var pending_crowd: Array = []
 var guess_entered := false   # predict: тоглогч энэ оролдлогод таамаглалаа оруулсан эсэх
-var mono_font: SystemFont
+# Бүлэг сонгох дэлгэц (route_view.gd) ба хадгалсан ахиц.
+var progress: Progress
+var route_view: RouteView
+var level_ui: MarginContainer   # түвшний бүх UI (маршрут харагдах үед нуугдана)
+var level_mistakes := 0         # энэ түвшинд гаргасан алдаа (од тооцоход)
+var level_cleared := false      # энэ түвшин энэ удаа давагдсан эсэх (од нэг л удаа бичигдэнэ)
+var mono_font: Font
+var chapter_chip: PanelContainer   # дээд мөр: бүлгийн нэр (бүлгийн өнгөөр)
+var chapter_label: Label
+var stars_label: Label             # дээд мөр: энэ түвшний хамгийн сайн од
+var hint_btn: Button               # «?»: нэмэлт тайлбар (cur.hint)
+var top_bar: HBoxContainer
+var code_card: PanelContainer      # predict / arrange: харанхуй C++ самбар
 
 var title_label: Label
 var story_label: Label
@@ -129,9 +142,17 @@ var skipping := false
 var anim_tweens: Array = []
 
 
+## Хувьсагчийн картон хайрцаг: дээд хавхаг (зураас) нэмж зурна.
+class CardboardBox extends PanelContainer:
+	func _draw() -> void:
+		var r := Rect2(Vector2(5, 5), Vector2(size.x - 10, 9))
+		draw_rect(r, UiTheme.BOX_DARK)
+		draw_line(Vector2(size.x / 2.0, 5), Vector2(size.x / 2.0, 14), UiTheme.INK, 1.5)
+
+
 ## Таамгийн хайрцгийн тасархай хүрээ: «энэ бол жинхэнэ утга биш, таны таамаг» гэдгийг харуулна.
 class DashedBox extends PanelContainer:
-	var dash_color := Color(0.9, 0.9, 0.95)
+	var dash_color := UiTheme.INK2
 
 	func _draw() -> void:
 		var r := Rect2(Vector2(2, 2), size - Vector2(4, 4))
@@ -141,16 +162,14 @@ class DashedBox extends PanelContainer:
 
 
 func _ready() -> void:
-	var t := Theme.new()
-	t.default_font_size = 20
-	var sf := SystemFont.new()
-	sf.font_names = PackedStringArray(["Segoe UI", "Arial", "Noto Sans", "DejaVu Sans", "sans-serif"])
-	t.default_font = sf
-	theme = t
-	mono_font = SystemFont.new()
-	mono_font.font_names = PackedStringArray(["Consolas", "Courier New", "DejaVu Sans Mono", "monospace"])
+	# Цаасан диорама загвар: нэг Theme + нэг өнгөний сан (ui_theme.gd).
+	theme = UiTheme.make_theme()
+	RenderingServer.set_default_clear_color(UiTheme.CREAM)
+	mono_font = UiTheme.font("mono_b")
+	progress = Progress.new(templates.size())
 	_build_ui()
 	_load_level(0)
+	_show_map()
 
 
 func _t(x: float) -> float:
@@ -183,20 +202,65 @@ func _row(parent: Control) -> HBoxContainer:
 func _build_ui() -> void:
 	var margin := MarginContainer.new()
 	margin.set_anchors_preset(Control.PRESET_FULL_RECT)
-	for side in ["margin_left", "margin_right", "margin_top", "margin_bottom"]:
-		margin.add_theme_constant_override(side, 24)
+	for side in ["margin_left", "margin_right"]:
+		margin.add_theme_constant_override(side, 16)
+	margin.add_theme_constant_override("margin_top", 12)
+	margin.add_theme_constant_override("margin_bottom", 10)
 	add_child(margin)
+	level_ui = margin
 
 	var root := VBoxContainer.new()
 	root.add_theme_constant_override("separation", 10)
 	margin.add_child(root)
 
+	# --- Дээд мөр: ← Бүлэг · [бүлэг] · гарчиг ······ од · ? ---
+	top_bar = HBoxContainer.new()
+	top_bar.add_theme_constant_override("separation", 12)
+	root.add_child(top_bar)
+	var back := Button.new()
+	back.text = "← Бүлэг"
+	back.focus_mode = Control.FOCUS_NONE
+	back.tooltip_text = "Esc"
+	back.custom_minimum_size = Vector2(0, 40)
+	back.pressed.connect(_show_map)
+	top_bar.add_child(back)
+	chapter_chip = PanelContainer.new()
+	chapter_chip.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	chapter_label = Label.new()
+	chapter_label.add_theme_font_override("font", UiTheme.font("bold"))
+	chapter_label.add_theme_font_size_override("font_size", 15)
+	chapter_label.add_theme_color_override("font_color", Color.WHITE)
+	chapter_chip.add_child(chapter_label)
+	top_bar.add_child(chapter_chip)
 	title_label = Label.new()
-	title_label.add_theme_font_size_override("font_size", 32)
-	root.add_child(title_label)
+	title_label.add_theme_font_override("font", UiTheme.font("xbold"))
+	title_label.add_theme_font_size_override("font_size", 24)
+	title_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	title_label.clip_text = true
+	top_bar.add_child(title_label)
+	stars_label = Label.new()
+	stars_label.add_theme_font_size_override("font_size", 24)
+	stars_label.add_theme_color_override("font_color", UiTheme.GLOW)
+	stars_label.add_theme_color_override("font_outline_color", UiTheme.INK)
+	stars_label.add_theme_constant_override("outline_size", 3)
+	top_bar.add_child(stars_label)
+	hint_btn = Button.new()
+	hint_btn.text = "?"
+	hint_btn.focus_mode = Control.FOCUS_NONE
+	hint_btn.tooltip_text = "Тайлбар"
+	hint_btn.custom_minimum_size = Vector2(42, 40)
+	hint_btn.add_theme_font_override("font", UiTheme.font("xbold"))
+	hint_btn.add_theme_font_size_override("font_size", 20)
+	var round_sb := UiTheme.paper(UiTheme.CARD, 20, 2, UiTheme.INK, 4)
+	hint_btn.add_theme_stylebox_override("normal", round_sb)
+	hint_btn.add_theme_stylebox_override("hover", round_sb)
+	hint_btn.pressed.connect(_on_hint)
+	top_bar.add_child(hint_btn)
 
 	story_label = Label.new()
 	story_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	story_label.add_theme_font_size_override("font_size", 17)
+	story_label.add_theme_color_override("font_color", UiTheme.INK2)
 	root.add_child(story_label)
 
 	# --- Програм + хайрцгууд (predict / arrange) ---
@@ -205,26 +269,35 @@ func _build_ui() -> void:
 	main_row.add_theme_constant_override("separation", 24)
 	root.add_child(main_row)
 
+	# Зүүн: харанхуй C++ самбар (кодын «дэлгэц»).
+	code_card = PanelContainer.new()
+	code_card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	code_card.size_flags_stretch_ratio = 1.3
+	code_card.add_theme_stylebox_override("panel", UiTheme.code_panel(14))
+	main_row.add_child(code_card)
 	var left := VBoxContainer.new()
-	left.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	left.size_flags_stretch_ratio = 1.3
 	left.add_theme_constant_override("separation", 8)
-	main_row.add_child(left)
-	left.add_child(_label("C++"))
+	code_card.add_child(left)
+	left.add_child(_panel_title("C++", true))
 	code_box = VBoxContainer.new()
 	code_box.add_theme_constant_override("separation", 6)
 	left.add_child(code_box)
-	_build_guess_area(left)
 
+	# Баруун: цаасан «Санах ой» самбар — хайрцгууд ба таамаг.
+	var right_card := PanelContainer.new()
+	right_card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	right_card.add_theme_stylebox_override("panel", UiTheme.paper(UiTheme.CARD, 14, 2, UiTheme.INK, 6, 14))
+	main_row.add_child(right_card)
 	var right := VBoxContainer.new()
-	right.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	main_row.add_child(right)
-	right.add_child(_label("Санах ой"))
+	right.add_theme_constant_override("separation", 8)
+	right_card.add_child(right)
+	right.add_child(_panel_title("Санах ой", false))
 	boxes = HFlowContainer.new()
 	boxes.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	boxes.add_theme_constant_override("h_separation", 12)
-	boxes.add_theme_constant_override("v_separation", 12)
+	boxes.add_theme_constant_override("h_separation", 18)
+	boxes.add_theme_constant_override("v_separation", 18)
 	right.add_child(boxes)
+	_build_guess_area(right)
 
 	# --- Хамгаалагч ---
 	guard_panel = HBoxContainer.new()
@@ -236,7 +309,7 @@ func _build_ui() -> void:
 	gl.custom_minimum_size = Vector2(430, 0)
 	gl.add_theme_constant_override("separation", 10)
 	guard_panel.add_child(gl)
-	gl.add_child(_label("ХАМГААЛАГЧИЙН ДҮРЭМ"))
+	gl.add_child(_panel_title("Хаалганы дүрэм", false))
 	var row1 := _row(gl)
 	row1.add_child(_code_label("age"))
 	op1 = _make_op_option(true)
@@ -250,13 +323,17 @@ func _build_ui() -> void:
 	join_opt.custom_minimum_size = Vector2(100, 44)
 	join_opt.item_selected.connect(func(_i): _update_guard_code())
 	rule2_row.add_child(join_opt)
-	rule2_row.add_child(_code_label("ticket"))
+	rule2_row.add_child(_code_label("card"))
 	op2 = _make_op_option(true)
 	rule2_row.add_child(op2)
 	val2 = _make_spin(0, 1, true)
 	rule2_row.add_child(val2)
 	guard_code = _code_label("", 20)
-	gl.add_child(guard_code)
+	guard_code.add_theme_color_override("font_color", UiTheme.CODE_TXT)
+	var gcode := PanelContainer.new()
+	gcode.add_theme_stylebox_override("panel", UiTheme.code_panel(14))
+	gcode.add_child(guard_code)
+	gl.add_child(gcode)
 
 	guard_view = GuardView.new()
 	guard_panel.add_child(guard_view)
@@ -333,7 +410,13 @@ func _build_ui() -> void:
 	code_row.alignment = BoxContainer.ALIGNMENT_CENTER
 	code_row.add_theme_constant_override("separation", 28)
 	code_row.custom_minimum_size = Vector2(0, 90)
-	tutorial_panel.add_child(code_row)
+	var tut_code := PanelContainer.new()
+	tut_code.add_theme_stylebox_override("panel", UiTheme.code_panel(10))
+	tut_code.add_child(code_row)
+	var tut_code_c := CenterContainer.new()
+	tut_code_c.add_child(tut_code)
+	tutorial_panel.add_child(tut_code_c)
+	code_row.custom_minimum_size = Vector2(620, 90)
 	var spacer := Control.new()
 	spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	tutorial_panel.add_child(spacer)
@@ -345,24 +428,24 @@ func _build_ui() -> void:
 	tutorial_panel.add_child(box_center)
 	tut_name_tag = PanelContainer.new()
 	tut_name_tag.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	tut_name_tag.add_theme_stylebox_override("panel", _tag_style(Color(0.12, 0.14, 0.2), Color(0.9, 0.9, 0.95)))
-	tut_name = _code_label("a", 34)
+	tut_name_tag.add_theme_stylebox_override("panel", UiTheme.tag(UiTheme.CARD))
+	tut_name = _code_label("people", 34)
 	tut_name_tag.add_child(tut_name)
 	box_stack.add_child(tut_name_tag)
-	tut_box = PanelContainer.new()
+	tut_box = CardboardBox.new()
 	tut_box.custom_minimum_size = Vector2(200, 130)
-	tut_box.add_theme_stylebox_override("panel", _box_style())
+	tut_box.add_theme_stylebox_override("panel", UiTheme.box_style())
 	box_stack.add_child(tut_box)
 	tut_value = Label.new()
 	tut_value.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	tut_value.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	tut_value.add_theme_font_size_override("font_size", 64)
+	tut_value.add_theme_font_override("font", mono_font)
 	tut_box.add_child(tut_value)
 	tut_type_tag = PanelContainer.new()
 	tut_type_tag.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	tut_type_tag.add_theme_stylebox_override("panel", _tag_style(YELLOW, YELLOW))
+	tut_type_tag.add_theme_stylebox_override("panel", UiTheme.tag(UiTheme.INT_TAG))
 	var type_label := _code_label("int", 26)
-	type_label.add_theme_color_override("font_color", Color(0.1, 0.1, 0.12))
 	tut_type_tag.add_child(type_label)
 	box_stack.add_child(tut_type_tag)
 	tut_caption = Label.new()
@@ -370,6 +453,7 @@ func _build_ui() -> void:
 	tut_caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	tut_caption.custom_minimum_size = Vector2(0, 80)
 	tut_caption.add_theme_font_size_override("font_size", 26)
+	tut_caption.add_theme_font_override("font", UiTheme.font("bold"))
 	tutorial_panel.add_child(tut_caption)
 
 	# --- Нөхцөл (flow): дээр нь код, доор нь блок схем + хувьсагчийн хайрцгууд (түвшин 1-ийн загвар) ---
@@ -379,8 +463,11 @@ func _build_ui() -> void:
 	root.add_child(flow_panel)
 	flow_code = VBoxContainer.new()
 	flow_code.add_theme_constant_override("separation", 2)
+	var fc_panel := PanelContainer.new()
+	fc_panel.add_theme_stylebox_override("panel", UiTheme.code_panel(10))
+	fc_panel.add_child(flow_code)
 	var fc_center := CenterContainer.new()
-	fc_center.add_child(flow_code)
+	fc_center.add_child(fc_panel)
 	flow_panel.add_child(fc_center)
 	var flow_row := HBoxContainer.new()
 	flow_row.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -397,7 +484,7 @@ func _build_ui() -> void:
 	flow_out_slot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	flow_row.add_child(flow_out_slot)
 
-	# --- Сорилт (нэмэлт түвшин): Батаагийн автобус, блокоор програм засах ---
+	# --- Сорилт (нэмэлт түвшин): автобусны карт уншигч, блокоор програм засах ---
 	challenge = ChallengePanel.new()
 	root.add_child(challenge)
 	challenge.setup(mono_font, _update_glow)
@@ -405,9 +492,15 @@ func _build_ui() -> void:
 	challenge.skipped.connect(_on_challenge_skipped)
 	challenge.message.connect(_show_message)
 
-	# --- Товчнууд (гарын товчлол: _unhandled_input) ---
+	message_label = Label.new()
+	message_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	message_label.custom_minimum_size = Vector2(0, 30)
+	message_label.add_theme_font_override("font", UiTheme.font("bold"))
+	root.add_child(message_label)
+
+	# --- Товчнууд (гарын товчлол: _unhandled_input). «← Бүлэг» нь дээд мөрөнд. ---
 	controls = HBoxContainer.new()
-	controls.add_theme_constant_override("separation", 8)
+	controls.add_theme_constant_override("separation", 10)
 	root.add_child(controls)
 	btn_start = _make_button("Эхлэх", _on_start, "Enter")
 	btn_step = _make_button("Алхам", _on_step_pressed, "Enter")
@@ -421,21 +514,16 @@ func _build_ui() -> void:
 	# Нөхцлийн тестийн хариултын товчнууд (улаан/ногоон, анивчина).
 	btn_false = _make_button("←  ХУДАЛ", func(): _flow_choose(0), "← (F зам)")
 	btn_true = _make_button("ҮНЭН  →", func(): _flow_choose(1), "→ (T зам)")
-	for pair in [[btn_false, FlowView.RED], [btn_true, FlowView.GREEN]]:
+	for pair in [[btn_false, UiTheme.FALSE], [btn_true, UiTheme.TRUE]]:
 		var b: Button = pair[0]
 		b.custom_minimum_size = Vector2(150, 44)
-		b.add_theme_font_size_override("font_size", 22)
-		var sb := StyleBoxFlat.new()
-		sb.bg_color = (pair[1] as Color).darkened(0.75)
-		sb.set_border_width_all(3)
-		sb.border_color = pair[1]
-		sb.set_corner_radius_all(6)
-		sb.shadow_color = Color(pair[1], 0.5)
-		sb.set_content_margin_all(8)
+		b.add_theme_font_size_override("font_size", 20)
+		var sb := UiTheme.paper(pair[1], 12, 2, UiTheme.INK, 0, 8)
+		sb.shadow_color = Color(pair[1], 0.55)
 		for state in ["normal", "hover", "pressed"]:
 			b.add_theme_stylebox_override(state, sb)
-		b.add_theme_color_override("font_color", pair[1])
-		b.add_theme_color_override("font_hover_color", Color.WHITE)
+		for c in ["font_color", "font_hover_color", "font_pressed_color"]:
+			b.add_theme_color_override(c, Color.WHITE)
 		choice_styles.append(sb)
 		b.visible = false
 	# Анивчих гэрэл (байнга ажиллана; товч харагдах үед л мэдэгдэнэ).
@@ -444,10 +532,12 @@ func _build_ui() -> void:
 		ct.tween_property(choice_styles[0], "shadow_size", target, 0.6).set_trans(Tween.TRANS_SINE)
 		ct.parallel().tween_property(choice_styles[1], "shadow_size", target, 0.6).set_trans(Tween.TRANS_SINE)
 
-	message_label = Label.new()
-	message_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	message_label.custom_minimum_size = Vector2(0, 70)
-	root.add_child(message_label)
+	# Бүлэг сонгох дэлгэц: түвшний UI-ийн оронд бүтэн дэлгэцээр харагдана.
+	route_view = RouteView.new()
+	route_view.visible = false
+	route_view.stop_chosen.connect(_on_stop_chosen)
+	add_child(route_view)
+	route_view.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
 	# Нисдэг утгууд хамгийн дээр зурагдана.
 	fly_layer = Control.new()
@@ -456,27 +546,38 @@ func _build_ui() -> void:
 	add_child(fly_layer)
 
 
-func _box_style() -> StyleBoxFlat:
-	var bs := StyleBoxFlat.new()
-	bs.bg_color = Color(0.12, 0.14, 0.2)
-	bs.set_border_width_all(4)
-	bs.border_color = Color(0.9, 0.9, 0.95)
-	bs.set_corner_radius_all(8)
-	return bs
+## Самбарын жижиг гарчиг: харанхуй код самбар дээр (dark) эсвэл цаасан карт дээр.
+func _panel_title(text: String, dark: bool) -> Label:
+	var l := Label.new()
+	l.text = text
+	l.add_theme_font_override("font", UiTheme.font("mono_b") if dark else UiTheme.font("bold"))
+	l.add_theme_font_size_override("font_size", 14 if dark else 16)
+	l.add_theme_color_override("font_color", UiTheme.CODE_DIM if dark else UiTheme.INK2)
+	return l
 
 
-## Хайрцагт наасан жижиг шошгоны загвар (нэр ба төрөл).
-func _tag_style(bg: Color, border: Color) -> StyleBoxFlat:
-	var s := StyleBoxFlat.new()
-	s.bg_color = bg
-	s.set_border_width_all(2)
-	s.border_color = border
-	s.set_corner_radius_all(6)
-	s.content_margin_left = 14
-	s.content_margin_right = 14
-	s.content_margin_top = 2
-	s.content_margin_bottom = 2
-	return s
+## C++ токены өнгө (харанхуй самбар дээр): int шар (int наалттай ижил), if/else ногоон-цэнхэр, тоо улбар шар.
+func _token_color(part: String) -> Color:
+	if part == "int":
+		return UiTheme.INT_TAG
+	if part in ["if", "else"]:
+		return UiTheme.CODE_KW
+	if part.is_valid_int():
+		return UiTheme.CODE_NUM
+	if part.length() > 0 and not (part[0] == "_" or part[0].to_lower() != part[0].to_upper()):
+		return UiTheme.CODE_SYM
+	return UiTheme.CODE_TXT
+
+
+## «?»: түвшний нэмэлт тайлбар (cur.hint). Дахин дарвал нуугдана.
+func _on_hint() -> void:
+	var h: String = cur.get("hint", "")
+	if h == "":
+		return
+	if message_label.text == h:
+		_show_message("")
+	else:
+		_show_message(h)
 
 
 func _make_button(text: String, handler: Callable, key_hint: String = "") -> Button:
@@ -500,18 +601,16 @@ func _build_guess_area(parent: Control) -> void:
 	var guess_col := VBoxContainer.new()
 	guess_col.add_theme_constant_override("separation", 0)
 	predict_row.add_child(guess_col)
-	guess_col.add_child(_label("Таны таамаг"))
+	guess_col.add_child(_panel_title("Таны таамаг", false))
 	var gtag := PanelContainer.new()
 	gtag.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	gtag.add_theme_stylebox_override("panel", _tag_style(Color(0.12, 0.14, 0.2), Color(0.9, 0.9, 0.95)))
-	guess_name = _code_label("b", 22)
+	gtag.add_theme_stylebox_override("panel", UiTheme.tag(UiTheme.CARD))
+	guess_name = _code_label("note", 22)
 	gtag.add_child(guess_name)
 	guess_col.add_child(gtag)
 	var dbox := DashedBox.new()
 	dbox.custom_minimum_size = Vector2(120, 72)
-	var empty := StyleBoxFlat.new()
-	empty.bg_color = Color(0.12, 0.14, 0.2, 0.6)
-	empty.set_corner_radius_all(8)
+	var empty := UiTheme.paper(Color("F8F2E6"), 10, 0, UiTheme.INK, 0)
 	empty.set_content_margin_all(6)   # тодорхой зай: гэрэлтэх үед хайрцаг томрохгүй
 	dbox.add_theme_stylebox_override("panel", empty)
 	guess_col.add_child(dbox)
@@ -522,6 +621,7 @@ func _build_guess_area(parent: Control) -> void:
 	guess_edit.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	guess_edit.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	guess_edit.add_theme_font_size_override("font_size", 36)
+	guess_edit.add_theme_font_override("font", mono_font)
 	var clear := StyleBoxFlat.new()
 	clear.bg_color = Color(0, 0, 0, 0)
 	clear.set_content_margin_all(4)
@@ -537,9 +637,8 @@ func _build_guess_area(parent: Control) -> void:
 	dbox.add_child(guess_edit)
 	var gtype := PanelContainer.new()
 	gtype.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	gtype.add_theme_stylebox_override("panel", _tag_style(YELLOW, YELLOW))
+	gtype.add_theme_stylebox_override("panel", UiTheme.tag(UiTheme.INT_TAG))
 	var gtl := _code_label("int", 18)
-	gtl.add_theme_color_override("font_color", Color(0.1, 0.1, 0.12))
 	gtype.add_child(gtl)
 	guess_col.add_child(gtype)
 
@@ -551,27 +650,27 @@ func _build_guess_area(parent: Control) -> void:
 	real_col = VBoxContainer.new()
 	real_col.add_theme_constant_override("separation", 0)
 	predict_row.add_child(real_col)
-	real_col.add_child(_label("Жинхэнэ"))
+	real_col.add_child(_panel_title("Жинхэнэ", false))
 	var rtag := PanelContainer.new()
 	rtag.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	rtag.add_theme_stylebox_override("panel", _tag_style(Color(0.12, 0.14, 0.2), Color(0.9, 0.9, 0.95)))
-	real_name = _code_label("b", 22)
+	rtag.add_theme_stylebox_override("panel", UiTheme.tag(UiTheme.CARD))
+	real_name = _code_label("note", 22)
 	rtag.add_child(real_name)
 	real_col.add_child(rtag)
-	real_box = PanelContainer.new()
+	real_box = CardboardBox.new()
 	real_box.custom_minimum_size = Vector2(120, 72)
-	real_box.add_theme_stylebox_override("panel", _box_style())
+	real_box.add_theme_stylebox_override("panel", UiTheme.box_style())
 	real_value = Label.new()
 	real_value.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	real_value.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	real_value.add_theme_font_size_override("font_size", 36)
+	real_value.add_theme_font_override("font", mono_font)
 	real_box.add_child(real_value)
 	real_col.add_child(real_box)
 	var rtype := PanelContainer.new()
 	rtype.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	rtype.add_theme_stylebox_override("panel", _tag_style(YELLOW, YELLOW))
+	rtype.add_theme_stylebox_override("panel", UiTheme.tag(UiTheme.INT_TAG))
 	var rtl := _code_label("int", 18)
-	rtl.add_theme_color_override("font_color", Color(0.1, 0.1, 0.12))
 	rtype.add_child(rtl)
 	real_col.add_child(rtype)
 
@@ -592,17 +691,102 @@ func _make_spin(lo: float, hi: float, live: bool = false) -> SpinBox:
 	s.max_value = hi
 	s.step = 1
 	s.custom_minimum_size = Vector2(110, 44)
+	# Бичсэн тоо шууд утга болно (Enter дарах, өөр газар дарах шаардлагагүй).
+	s.update_on_text_changed = true
+	s.get_line_edit().gui_input.connect(_on_spin_key.bind(s))
 	if live:
 		s.value_changed.connect(func(_v): _update_guard_code())
 	return s
+
+
+## SpinBox-д монгол (кирилл) гарын байрлалаар ч тоо бичигдэнэ (таамгийн хайрцагтай адил).
+func _on_spin_key(event: InputEvent, s: SpinBox) -> void:
+	if not (event is InputEventKey) or not event.pressed:
+		return
+	var ch := _physical_digit(event)
+	if ch == "":
+		return
+	var le := s.get_line_edit()
+	le.accept_event()
+	# Шинэ бичвэрийг өөрсдөө бүтээнэ: SpinBox тоо бүрийн дараа бичвэрээ дахин форматлахад
+	# курсор эхэнд үсрээд дараагийн цифр алга болдог байсан («20» → 2).
+	var text := le.text
+	var caret := le.caret_column
+	if le.has_selection():
+		var from := le.get_selection_from_column()
+		text = text.substr(0, from) + text.substr(le.get_selection_to_column())
+		caret = from
+		le.deselect()
+	text = text.substr(0, caret) + ch + text.substr(caret)
+	if text.is_valid_int():
+		s.value = int(text)              # min/max-аар хязгаарлагдана
+		text = str(int(s.value))
+	le.text = text
+	le.caret_column = text.length()
 
 
 # ---------------------------------------------------------------- түвшин
 
 func _load_level(i: int) -> void:
 	level_index = i
+	level_mistakes = 0
+	level_cleared = false
+	route_view.visible = false
+	level_ui.visible = true
 	cur = Levels.make(templates[i])
 	_setup_level()
+
+
+# ---------------------------------------------------------------- бүлэг сонгох дэлгэц
+
+## Анимаци явж байх үед түвшнээс гарахгүй (хагас дууссан анимаци нуугдсан UI-г өөрчлөх эрсдэлтэй).
+func _is_animating() -> bool:
+	return busy or tut_busy or flow_busy or guard_view.running or challenge.busy or route_view.busy
+
+
+func _route_stops() -> Array:
+	var out: Array = []
+	for i in templates.size():
+		var t: Dictionary = templates[i]
+		var state := 0
+		if progress.stars[i] > 0:
+			state = 2
+		elif progress.is_open(i):
+			state = 1
+		out.append({"label": t.get("map", t.title), "stars": progress.stars[i], "state": state,
+			"optional": t.get("optional", false), "chapter": t.get("chapter", "var")})
+	return out
+
+
+## Маршрутыг харуулна. Автобус одоогийн түвшний буудал дээр зогсоно.
+func _show_map(bubble: String = "Аль буудал руу?") -> void:
+	if _is_animating():
+		return
+	run_token += 1
+	_set_glow(null)
+	level_ui.visible = false
+	route_view.visible = true
+	route_view.set_stops(_route_stops())
+	route_view.bubble = bubble
+	route_view.bus_f = float(level_index)
+	route_view.selected = level_index
+	# Дараагийн нээлттэй (давж амжаагүй) буудлыг санал болгоно.
+	for i in templates.size():
+		if progress.is_open(i) and progress.stars[i] == 0:
+			route_view.selected = i
+			break
+
+
+func _on_stop_chosen(i: int) -> void:
+	if route_view.busy:
+		return
+	if i == level_index:
+		_load_level(i)
+		return
+	# Автобус шинэ буудал руу явж очоод түвшин нээгдэнэ.
+	await route_view.travel(level_index, i, clampf(0.45 * absf(i - level_index), 0.6, 1.6))
+	await get_tree().create_timer(0.25).timeout
+	_load_level(i)
 
 
 func _setup_level() -> void:
@@ -610,7 +794,13 @@ func _setup_level() -> void:
 	program = cur.lines.duplicate()
 	sel_index = -1
 	wrong_tries = 0   # шинэ тоонууд = шинэ тойрог, 3 оролдлого
-	title_label.text = "Түвшин %d / %d  -  %s" % [level_index + 1, templates.size(), cur.title]
+	title_label.text = "%d · %s" % [level_index + 1, cur.title]
+	var ch: Dictionary = UiTheme.CHAPTERS.get(templates[level_index].get("chapter", "var"), UiTheme.CHAPTERS["var"])
+	chapter_label.text = "%s  %s" % [ch.icon, ch.name]
+	chapter_chip.add_theme_stylebox_override("panel", UiTheme.chip(ch.acc))
+	chapter_label.add_theme_color_override("font_color", UiTheme.on_color(ch.acc))
+	_update_stars()
+	hint_btn.visible = str(cur.get("hint", "")) != ""
 	story_label.text = cur.story
 	guess_name.text = cur.get("ask", "")
 	real_name.text = cur.get("ask", "")
@@ -621,9 +811,8 @@ func _setup_level() -> void:
 	tutorial_panel.visible = mode == "tutorial"
 	flow_panel.visible = mode == "flow"
 	challenge.visible = mode == "challenge"
-	# Сорилт бүтэн цонхыг ашиглана: гарчиг, түүх, мессежийн мөр нуугдана (Батаа өөрөө ярина).
-	story_label.visible = mode != "challenge"
-	title_label.visible = mode != "challenge"
+	# Сорилт: дүрэм ба мессеж нь үзэгдэл дотроо (дээд мөр харагдсаар).
+	story_label.visible = mode != "challenge" and str(cur.story) != ""
 	message_label.visible = mode != "challenge"
 	predict_row.visible = mode == "predict"
 	btn_start.visible = is_play
@@ -751,15 +940,14 @@ func _set_glow(target: Control) -> void:
 	for state in _glow_states(target):
 		if target.has_theme_stylebox_override(state):
 			glow_saved[state] = target.get_theme_stylebox(state)
-	var sb := StyleBoxFlat.new()
-	sb.bg_color = Color(0.2, 0.19, 0.12)
-	sb.set_border_width_all(3)
-	sb.border_color = YELLOW
-	sb.set_corner_radius_all(6)
-	sb.shadow_color = Color(YELLOW, 0.55)
-	sb.shadow_size = 0
-	# Товчны өөрийн дотоод зайг хуулна: гэрэлтэх үед товч томрохгүй, бусад нь шилжихгүй.
+	# Товч: шар дүүргэлт + бараан хүрээ; бусад (таамгийн хайрцаг): шар хүрээ. Хоёулаа шар туяатай.
 	var base: StyleBox = target.get_theme_stylebox(_glow_states(target)[0])
+	var sb := UiTheme.paper(YELLOW if target is Button else Color("FFF6D6"), 12, 2 if target is Button else 3,
+		UiTheme.INK if target is Button else YELLOW.darkened(0.15), 0)
+	sb.shadow_color = Color(YELLOW, 0.65)
+	sb.shadow_size = 0
+	sb.shadow_offset = Vector2.ZERO
+	# Өөрийн дотоод зайг хуулна: гэрэлтэх үед товч томрохгүй, бусад нь шилжихгүй.
 	for side in [SIDE_LEFT, SIDE_TOP, SIDE_RIGHT, SIDE_BOTTOM]:
 		sb.set_content_margin(side, base.get_content_margin(side))
 	for state in _glow_states(target):
@@ -773,27 +961,40 @@ func _set_glow(target: Control) -> void:
 ## Тоглогчид тавих асуулт: том, шар үсгээр (энгийн мессежээс ялгарна).
 func _show_question(text: String) -> void:
 	message_label.text = text
-	message_label.add_theme_color_override("font_color", YELLOW)
-	message_label.add_theme_font_size_override("font_size", 28)
+	message_label.add_theme_color_override("font_color", UiTheme.INK)
+	message_label.add_theme_font_size_override("font_size", 26)
+	message_label.add_theme_font_override("font", UiTheme.font("xbold"))
 
 
 func _show_message(text: String, good_or_bad: int = 0) -> void:
 	message_label.remove_theme_font_size_override("font_size")
+	message_label.add_theme_font_override("font", UiTheme.font("bold"))
 	message_label.text = text
 	match good_or_bad:
-		1: message_label.add_theme_color_override("font_color", Color(0.4, 0.9, 0.5))
-		-1: message_label.add_theme_color_override("font_color", Color(1.0, 0.45, 0.45))
+		1: message_label.add_theme_color_override("font_color", UiTheme.TRUE.darkened(0.15))
+		-1: message_label.add_theme_color_override("font_color", UiTheme.FALSE.darkened(0.1))
 		_: message_label.remove_theme_color_override("font_color")
 
 
 func _offer_next() -> void:
+	if not level_cleared:
+		level_cleared = true
+		var mistakes := challenge.fails if cur.mode == "challenge" else level_mistakes
+		var s := Progress.stars_for(mistakes)
+		progress.record(level_index, s)
+		_update_stars()
 	btn_next.text = "Дараагийн түвшин" if level_index + 1 < templates.size() else "Дуусгах"
 	btn_next.visible = true
 	_update_glow()
 
 
+## Дээд мөрийн од: энэ түвшний хамгийн сайн үр дүн.
+func _update_stars() -> void:
+	var n: int = progress.stars[level_index]
+	stars_label.text = "★".repeat(n) + "☆".repeat(3 - n)
+
+
 func _on_challenge_solved() -> void:
-	title_label.text += "   ★"
 	_offer_next()
 
 
@@ -801,8 +1002,8 @@ func _on_challenge_solved() -> void:
 func _on_challenge_skipped() -> void:
 	challenge.phase = "done"
 	challenge._update_bottom()
-	challenge.bus.bubble_text = "За, дараа уулзъя! Хүссэн үедээ эргэж ирж засаарай."
-	challenge._status("Сорилтыг алгаслаа.  1-р хэсэг дууслаа!  Дараа нь: 2-р хэсэг (Давталт).", 1)
+	challenge._note("")
+	challenge._status("Сорилт алгаслаа", 1)
 	_update_glow()
 
 
@@ -810,14 +1011,11 @@ func _on_next() -> void:
 	if busy or tut_busy or flow_busy or guard_view.running or challenge.busy:
 		return
 	if level_index + 1 < templates.size():
-		_load_level(level_index + 1)
+		# Маршрут дээр автобус дараагийн буудал руу явж очно.
+		_show_map("Явцгаая!")
+		_on_stop_chosen(level_index + 1)
 	else:
-		btn_next.visible = false
-		btn_test.disabled = true
-		btn_start.disabled = true
-		btn_step.disabled = true
-		btn_run.disabled = true
-		_show_message("1-р хэсэг дууслаа!  Дараа нь: 2-р хэсэг (Давталт).", 1)
+		_show_map("1-р хэсэг дууслаа!")
 
 
 # ---------------------------------------------------------------- програм ба хайрцгууд
@@ -841,11 +1039,13 @@ func _refresh_code() -> void:
 				3: bg = ROW_ERR
 		var sb := StyleBoxFlat.new()
 		sb.bg_color = bg
-		sb.set_corner_radius_all(6)
-		sb.set_content_margin_all(10)
+		sb.set_corner_radius_all(8)
+		sb.set_content_margin_all(8)
 		sb.border_color = YELLOW
 		if can_arrange and i == sel_index:
 			sb.set_border_width_all(3)
+		elif current:
+			sb.border_width_left = 5   # одоогийн мөр: шар зүүн тууз
 		# Мөр бүр = «слот» (VBox-д байр эзэлнэ) + доторх «карт» (харагдах мөр).
 		# Карт контейнерт захирагддаггүй тул чирэх ба гулсах анимацид чөлөөтэй хөдөлнө.
 		var card := PanelContainer.new()
@@ -856,14 +1056,17 @@ func _refresh_code() -> void:
 		card.add_child(h)
 		if can_arrange:
 			var grip := _code_label("≡", 30)   # «чирж болно» гэсэн бариул
-			grip.add_theme_color_override("font_color", Color(1, 1, 1, 0.35))
+			grip.add_theme_color_override("font_color", UiTheme.CODE_DIM)
 			h.add_child(grip)
 			card.mouse_default_cursor_shape = Control.CURSOR_DRAG
 			card.gui_input.connect(_on_card_input.bind(card))
-		h.add_child(_code_label(("> %d" if current else "  %d") % (i + 1), 30))
+		var num := _code_label(("» %d" if current else "  %d") % (i + 1), 30)
+		num.add_theme_color_override("font_color", YELLOW if current else UiTheme.CODE_DIM)
+		h.add_child(num)
 		var toks: Array = []
 		for part in _split_tokens(str(program[i])):
 			var l := _code_label(part, 34)
+			l.add_theme_color_override("font_color", _token_color(part))
 			h.add_child(l)
 			toks.append(l)
 		row_tokens.append(toks)
@@ -1027,7 +1230,7 @@ func _refresh_boxes(vals: Dictionary, changed: String = "") -> void:
 	for k in vals:
 		var vb := _make_var_box(str(k), "" if vals[k] == null else str(vals[k]))   # утга ирээгүй хайрцаг хоосон
 		if str(k) == changed:
-			(vb.value as Label).add_theme_color_override("font_color", YELLOW)
+			(vb.value as Label).add_theme_color_override("font_color", UiTheme.HILITE)
 		boxes.add_child(vb.stack)
 		box_panels[str(k)] = vb.panel
 
@@ -1039,24 +1242,24 @@ func _make_var_box(var_name: String, value_text: String, box_size := Vector2(120
 	stack.add_theme_constant_override("separation", 0)
 	var name_tag := PanelContainer.new()
 	name_tag.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	name_tag.add_theme_stylebox_override("panel", _tag_style(Color(0.12, 0.14, 0.2), Color(0.9, 0.9, 0.95)))
+	name_tag.add_theme_stylebox_override("panel", UiTheme.tag(UiTheme.CARD))
 	name_tag.add_child(_code_label(var_name, 22))
 	stack.add_child(name_tag)
-	var panel := PanelContainer.new()
+	var panel := CardboardBox.new()
 	panel.custom_minimum_size = box_size
-	panel.add_theme_stylebox_override("panel", _box_style())
+	panel.add_theme_stylebox_override("panel", UiTheme.box_style())
 	var val := Label.new()
 	val.text = value_text
 	val.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	val.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	val.add_theme_font_size_override("font_size", font_size)
+	val.add_theme_font_override("font", mono_font)
 	panel.add_child(val)
 	stack.add_child(panel)
 	var type_tag := PanelContainer.new()
 	type_tag.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	type_tag.add_theme_stylebox_override("panel", _tag_style(YELLOW, YELLOW))
+	type_tag.add_theme_stylebox_override("panel", UiTheme.tag(UiTheme.INT_TAG))
 	var type_label := _code_label("int", 18)
-	type_label.add_theme_color_override("font_color", Color(0.1, 0.1, 0.12))
 	type_tag.add_child(type_label)
 	stack.add_child(type_tag)
 	return {"stack": stack, "panel": panel, "value": val}
@@ -1082,7 +1285,7 @@ func _on_guess_changed(text: String) -> void:
 func _reject_guess() -> void:
 	_show_message("✗  Дахин бод.  %d оролдлого үлдлээ." % (3 - wrong_tries), -1)
 	guess_mark.text = "✗"
-	guess_mark.add_theme_color_override("font_color", Color(1.0, 0.45, 0.45))
+	guess_mark.add_theme_color_override("font_color", UiTheme.FALSE)
 	var x0 := guess_edit.position.x
 	var tw := create_tween()
 	for dx in [10.0, -10.0, 6.0, -4.0, 0.0]:
@@ -1097,14 +1300,7 @@ func _reject_guess() -> void:
 func _on_guess_key(event: InputEvent) -> void:
 	if not (event is InputEventKey) or not event.pressed or not guess_edit.editable:
 		return
-	var pk: Key = event.physical_keycode if event.physical_keycode != KEY_NONE else event.keycode
-	var ch := ""
-	if pk >= KEY_0 and pk <= KEY_9:
-		ch = str(pk - KEY_0)
-	elif pk >= KEY_KP_0 and pk <= KEY_KP_9:
-		ch = str(pk - KEY_KP_0)
-	elif pk == KEY_MINUS or pk == KEY_KP_SUBTRACT:
-		ch = "-"
+	var ch := _physical_digit(event)
 	if ch == "":
 		return
 	if guess_edit.has_selection():
@@ -1113,6 +1309,18 @@ func _on_guess_key(event: InputEvent) -> void:
 	guess_edit.insert_text_at_caret(ch)
 	_on_guess_changed(guess_edit.text)
 	guess_edit.accept_event()
+
+
+## Товчны физик байрлалаас тоо (эсвэл "-"). Тоо биш товч бол "".
+func _physical_digit(event: InputEventKey) -> String:
+	var pk: Key = event.physical_keycode if event.physical_keycode != KEY_NONE else event.keycode
+	if pk >= KEY_0 and pk <= KEY_9:
+		return str(pk - KEY_0)
+	if pk >= KEY_KP_0 and pk <= KEY_KP_9:
+		return str(pk - KEY_KP_0)
+	if pk == KEY_MINUS or pk == KEY_KP_SUBTRACT:
+		return "-"
+	return ""
 
 
 func _on_start() -> void:
@@ -1131,6 +1339,7 @@ func _on_start() -> void:
 		var actual = ip.vars.get(cur.ask, null)
 		if actual == null or int(guess_edit.text) != actual:
 			wrong_tries += 1
+			level_mistakes += 1
 			if wrong_tries < 3:
 				_reject_guess()
 				return
@@ -1158,6 +1367,7 @@ func _on_step() -> void:
 	if not res.ok:
 		states[row] = 3
 		finished = true
+		level_mistakes += 1
 		_show_message("%d-р мөр:  %s" % [row + 1, res.error], -1)
 	else:
 		states[row] = 2 if res.skipped else 1
@@ -1259,7 +1469,7 @@ func _finish() -> void:
 			await _fly(str(actual), _center_of(box_panels[cur.ask]), _center_of(real_box), true, 34)
 		real_col.modulate.a = 1.0
 		guess_mark.text = "✓" if solved else "✗"
-		guess_mark.add_theme_color_override("font_color", Color(0.4, 0.9, 0.5) if solved else Color(1.0, 0.45, 0.45))
+		guess_mark.add_theme_color_override("font_color", UiTheme.TRUE if solved else UiTheme.FALSE)
 		# Хайрцгууд утгыг харуулж байгаа тул бичиг нь зөвхөн «яагаад» гэдгийг хэлнэ.
 		text = ("ЗӨВ ✓   " if solved else "") + cur.hint
 	else:
@@ -1268,6 +1478,7 @@ func _finish() -> void:
 			solved = true
 			text = "ЗӨВ ✓   " + cur.hint
 		else:
+			level_mistakes += 1
 			text = "%s = %s,   зорилт: %d" % [cur.goal_var, str(actual), cur.goal]
 	_show_message(text, 1 if solved else -1)
 	if solved:
@@ -1310,14 +1521,14 @@ func _setup_guard() -> void:
 func _guard_condition() -> String:
 	var c := "age %s %d" % [OPS[op1.selected], int(val1.value)]
 	if cur.get("rules", 1) == 2:
-		c += " %s ticket %s %d" % [join_opt.get_item_text(join_opt.selected), OPS[op2.selected], int(val2.value)]
+		c += " %s card %s %d" % [join_opt.get_item_text(join_opt.selected), OPS[op2.selected], int(val2.value)]
 	return c
 
 
 func _update_guard_code() -> void:
 	if guard_code == null or guard_view == null or cur.is_empty() or cur.mode != "guard":
 		return
-	guard_code.text = "if (%s) {\n    letIn();\n} else {\n    turnAway();\n}" % _guard_condition()
+	guard_code.text = "if (%s) {\n    openDoor();\n} else {\n    keepClosed();\n}" % _guard_condition()
 	guard_view.sign_text = _guard_condition()
 
 
@@ -1355,18 +1566,18 @@ func _test_guard() -> void:
 	var t: int = cur.vals.get("T", 18)
 	var cond := _guard_condition()
 	var e := Expression.new()
-	if e.parse(cond, ["age", "ticket"]) != OK:
+	if e.parse(cond, ["age", "card"]) != OK:
 		_show_message("Дүрэм уншигдсангүй.", -1)
 		return
 	var judge := func(p: Dictionary) -> Dictionary:
 		var res = e.execute([p.age, p.ticket], null, false)
 		var allowed: bool = (res == true)
 		var expect: bool = p.age >= t and (p.ticket == 1 or not two)
-		var shown := cond.replace("ticket", str(p.ticket)).replace("age", str(p.age))
+		var shown := cond.replace("card", str(p.ticket)).replace("age", str(p.age))
 		return {"allowed": allowed, "expect": expect, "text": "%s   ->   %s" % [shown, "true" if allowed else "false"]}
 	btn_test.disabled = true
 	btn_next.visible = false
-	_show_message("Хамгаалагч хүмүүсийг нэг нэгээр нь шалгаж байна...")
+	_show_message("Шалгаж байна…")
 	var result: Dictionary = await guard_view.run_test(pending_crowd, two, free, judge)
 	pending_crowd = _make_crowd(t, two)
 	guard_view.show_crowd(pending_crowd, two)
@@ -1380,6 +1591,7 @@ func _test_guard() -> void:
 		_show_message("ЗӨВ.  Бүх хүн зөв шийдэгдлээ.  " + cur.hint, 1)
 		_offer_next()
 		return
+	level_mistakes += 1
 	var ages: Array = []
 	var border_wrong := false
 	for w in wrong:
@@ -1541,6 +1753,7 @@ func _input(event: InputEvent) -> void:
 	if OS.is_debug_build():
 		if k == KEY_F9:
 			if level_index + 1 < templates.size():
+				progress.unlocked = maxi(progress.unlocked, level_index + 2)
 				_load_level(level_index + 1)
 			get_viewport().set_input_as_handled()
 
@@ -1554,7 +1767,24 @@ func _unhandled_input(event: InputEvent) -> void:
 	var repeatable := key in [KEY_W, KEY_S, KEY_UP, KEY_DOWN]
 	if event.echo and not repeatable:
 		return
-	# Сорилт: → / D = Батаагийн дараагийн үг (эсвэл дуусгах), Enter = засъя / турших.
+	# Маршрут: ← / → (A / D) буудал сонгох, Enter / Space явах.
+	if route_view.visible:
+		match key:
+			KEY_LEFT, KEY_A:
+				route_view.move_sel(-1)
+			KEY_RIGHT, KEY_D:
+				route_view.move_sel(1)
+			KEY_ENTER, KEY_KP_ENTER, KEY_SPACE:
+				route_view.activate()
+			_:
+				return
+		get_viewport().set_input_as_handled()
+		return
+	if key == KEY_ESCAPE:
+		_show_map()
+		get_viewport().set_input_as_handled()
+		return
+	# Сорилт: → / D = дуусгасны дараа дараагийн түвшин, Enter = турших.
 	if cur.get("mode", "") == "challenge" and key in [KEY_RIGHT, KEY_D, KEY_ENTER, KEY_KP_ENTER]:
 		if key in [KEY_ENTER, KEY_KP_ENTER]:
 			challenge.key_enter()
@@ -1611,6 +1841,8 @@ func _fly(text: String, from_center: Vector2, to_center: Vector2, pulse: bool, f
 	f.add_theme_font_size_override("font_size", font_size)
 	f.add_theme_font_override("font", mono_font)
 	f.add_theme_color_override("font_color", YELLOW)
+	f.add_theme_color_override("font_outline_color", UiTheme.INK)
+	f.add_theme_constant_override("outline_size", maxi(6, font_size / 6))
 	fly_layer.add_child(f)
 	var half := f.get_combined_minimum_size() / 2.0
 	f.pivot_offset = half
@@ -1649,7 +1881,9 @@ func _set_tokens(tokens: Array) -> void:
 		code_row.remove_child(c)
 		c.queue_free()
 	for t in tokens:
-		code_row.add_child(_code_label(str(t), 56))
+		var l := _code_label(str(t), 56)
+		l.add_theme_color_override("font_color", _token_color(str(t)))
+		code_row.add_child(l)
 
 
 func _tok(i: int) -> Label:
@@ -1718,7 +1952,7 @@ func _flow_build_code(op: String) -> void:
 	for line in _flow_lines(op):
 		var sb := StyleBoxFlat.new()
 		sb.bg_color = ROW_BASE
-		sb.set_corner_radius_all(4)
+		sb.set_corner_radius_all(6)
 		sb.content_margin_left = 14
 		sb.content_margin_right = 14
 		sb.content_margin_top = 2
@@ -1735,7 +1969,9 @@ func _flow_build_code(op: String) -> void:
 			sp.custom_minimum_size = Vector2(indent * 9, 0)
 			h.add_child(sp)
 		for part in _split_tokens(str(line).strip_edges()):
-			h.add_child(_code_label(part, 26))
+			var fl := _code_label(part, 26)
+			fl.add_theme_color_override("font_color", _token_color(part))
+			h.add_child(fl)
 		flow_code.add_child(row)
 		flow_rows.append(row)
 
@@ -1812,7 +2048,7 @@ func _flow_run(value: int, op: String) -> bool:
 		var out_v: int = cur.t_val if side == 1 else cur.f_val
 		await _fly(str(out_v), flow_view.global_position + flow_view.box_center(side), _center_of(flow_out_panel), true, 30)
 		flow_out_val.text = str(out_v)
-		flow_out_val.add_theme_color_override("font_color", YELLOW)
+		flow_out_val.add_theme_color_override("font_color", UiTheme.HILITE)
 	else:
 		_flow_row(1, 2)   # if-ийн блок алгасагдлаа
 	await _flow_move_token(side, tb, 1.0, 0.5)
@@ -1946,6 +2182,7 @@ func _flow_choose(side: int) -> void:
 		flow_correct += 1
 		_show_message("✓   " + _flow_dots(), 1)
 	else:
+		level_mistakes += 1
 		var why := "✗   %d %s %d  →  %s" % [flow_input, flow_op, t, "ҮНЭН (true)" if expect else "ХУДАЛ (false)"]
 		if flow_op == "==":
 			why += "    («==» зөвхөн яг %d үед үнэн)" % t
@@ -2013,12 +2250,12 @@ func _mark(i: int, on: bool) -> void:
 	if on:
 		_tok(i).add_theme_color_override("font_color", YELLOW)
 	else:
-		_tok(i).remove_theme_color_override("font_color")
+		_tok(i).add_theme_color_override("font_color", _token_color(_tok(i).text))
 
 
-## int a;  ->  'int' төрлийн наалт болж, 'a' нэрийн шошго болж, дотор нь '?'.
+## int people;  ->  'int' төрлийн наалт болж, 'people' нэрийн шошго болж, хайрцаг хоосон.
 func _tut_step1() -> void:
-	_set_tokens(["int", "a", ";"])
+	_set_tokens(["int", "people", ";"])
 	tut_caption.text = ""
 	await _layout()
 	_mark(0, true)
@@ -2027,7 +2264,7 @@ func _tut_step1() -> void:
 	await _fade_in(tut_type_tag, 0.2)
 	_mark(0, false)
 	_mark(1, true)
-	await _fly("a", _center_of(_tok(1)), _center_of(tut_name_tag), false, 40)
+	await _fly("people", _center_of(_tok(1)), _center_of(tut_name_tag), false, 40)
 	await _fade_in(tut_name_tag, 0.2)
 	_mark(1, false)
 	# Хайрцаг хоосон харагдана. Тайлбар нь «утга өгөөгүй» гэж үнэнээр хэлнэ
@@ -2036,7 +2273,7 @@ func _tut_step1() -> void:
 
 
 func _tut_step2() -> void:
-	_set_tokens(["a", "=", str(tut_v), ";"])
+	_set_tokens(["people", "=", str(tut_v), ";"])
 	tut_caption.text = ""
 	await _layout()
 	_mark(2, true)
@@ -2046,7 +2283,7 @@ func _tut_step2() -> void:
 
 
 func _tut_step3() -> void:
-	_set_tokens(["a", "=", "a", "+", str(tut_k), ";"])
+	_set_tokens(["people", "=", "people", "+", str(tut_k), ";"])
 	tut_caption.text = ""
 	await _layout()
 	# '=' түр '←' болж хувирна: «тэнцүү» биш, «хайрцагт хийх» гэсэн үг.
@@ -2055,13 +2292,13 @@ func _tut_step3() -> void:
 	tut_caption.text = "«=» нь «хийх, олгох»"
 	await _wait(1.5)
 	_tok(1).text = "="
-	# 2 хайрцгаас кодын хоёр дахь 'a' руу нисэж, түүнийг сольно.
+	# 2 хайрцгаас кодын хоёр дахь 'people' руу нисэж, түүнийг сольно.
 	# (Хайрцагт бүдэг 2 үлдэнэ: хайрцгийг унших нь утгыг хуулдаг, шинэ утга ирэх хүртэл хэвээр байна.)
 	tut_value.modulate.a = 0.3
 	await _fly(str(tut_v), _center_of(tut_box), _center_of(_tok(2)), false)
 	_tok(2).text = str(tut_v)
 	await _wait(1.0)
-	_set_tokens(["a", "=", str(tut_v + tut_k), ";"])
+	_set_tokens(["people", "=", str(tut_v + tut_k), ";"])
 	await _layout()
 	_tok(1).add_theme_color_override("font_color", YELLOW)
 	await _wait(0.8)

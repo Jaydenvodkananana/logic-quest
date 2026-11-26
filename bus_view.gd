@@ -1,6 +1,6 @@
 class_name BusView
 extends Control
-## Сорилтын түвшин: Батаа жолоочтой автобус, яриа (bubble), карт уншигч, зорчигчид.
+## Сорилтын түвшин (цаасан диорама): автобус, карт уншигч, зорчигчид, тайлбарын тэмдэглэл (bubble_text).
 ## Турших үед зорчигчид нэг нэгээр карт уншуулж, уншигч үнийг харуулна, ✓/✗ тэмдэглэнэ.
 
 class Rider extends RefCounted:
@@ -13,17 +13,18 @@ class Rider extends RefCounted:
 	var shirt := Color(0.3, 0.5, 0.8)
 	var skin := Color(0.9, 0.75, 0.6)
 
-const SHIRTS := [Color(0.3, 0.5, 0.8), Color(0.75, 0.35, 0.35), Color(0.35, 0.65, 0.45), Color(0.7, 0.55, 0.25), Color(0.55, 0.4, 0.7)]
-const SKINS := [Color(0.92, 0.76, 0.62), Color(0.8, 0.6, 0.45), Color(0.6, 0.42, 0.3), Color(0.95, 0.82, 0.7)]
-const GREEN := Color(0.4, 0.9, 0.5)
-const RED := Color(1.0, 0.45, 0.45)
+const SHIRTS := UiTheme.SHIRTS
+const SKINS := UiTheme.SKINS
+const GREEN := Color("7EE2A8")   # уншигчийн дэлгэц дээр (харанхуй)
+const RED := Color("FF8A80")
+const IDLE := Color("5FD4C4")
 const SPACING := 62.0
 
 var speed := 1.0
 var running := false
 var bubble_text := ""
 var reader_text := "---"
-var reader_color := Color(0.5, 0.9, 1.0)
+var reader_color := IDLE
 var door_open := 0.0
 var riders: Array = []
 var compact := false   # засварын үед жижиг (програмын талбайд илүү зай)
@@ -61,7 +62,7 @@ func _ground() -> float:
 
 
 func _bus_x() -> float:
-	return size.x * 0.52
+	return size.x * 0.55
 
 
 func _door_x() -> float:
@@ -69,11 +70,11 @@ func _door_x() -> float:
 
 
 func _reader_pos() -> Vector2:
-	return Vector2(_door_x() + 44.0, _ground() - 86.0)
+	return Vector2(_door_x() - 142.0, _ground() - 96.0)
 
 
 func _spot_x() -> float:
-	return _door_x() - 48.0
+	return _door_x() - 196.0
 
 
 # ---------------------------------------------------------------- турших
@@ -122,7 +123,7 @@ func run_test(cases: Array, results: Array) -> void:
 				shift.tween_property(q, "pos", q.pos + Vector2(SPACING, 0.0), _d(0.22))
 			await shift.finished
 	reader_text = "---"
-	reader_color = Color(0.5, 0.9, 1.0)
+	reader_color = IDLE
 	# Буруу төлсөн зорчигчдыг зүүн талд эгнээгээр жагсаана: хэн нь буруу байсныг нэг бүрчлэн уншиж болно.
 	var k := 0
 	var tw2 := create_tween().set_parallel(true)
@@ -145,100 +146,61 @@ func _wait(t: float) -> void:
 # ---------------------------------------------------------------- зураг
 
 func _draw() -> void:
-	var font := get_theme_default_font()
 	var g := _ground()
-	draw_rect(Rect2(0, 0, size.x, size.y), Color(0.08, 0.1, 0.18))
-	draw_rect(Rect2(0, g, size.x, size.y - g), Color(0.17, 0.19, 0.22))
-	_draw_bus(font, g)
+	UiTheme.diorama(self, Rect2(Vector2.ZERO, size), Color("DDF1ED"), Color("B9E0D8"), Color("95D0C4"), size.y - g, 11)
+	_draw_bus(g)
 	for r in riders:
-		_draw_rider(font, r)
+		_draw_rider(r)
 	if bubble_text != "":
-		_draw_bubble(font)
+		_draw_note()
 
 
-func _draw_bus(font: Font, g: float) -> void:
-	var bx := _bus_x()
-	var top := g - (112.0 if compact else 140.0)
-	var body := Rect2(bx, top, size.x - bx + 40.0, g - top - 12.0)
-	draw_rect(body, Color(0.95, 0.72, 0.18))                       # шар автобус
-	draw_rect(Rect2(bx, top + 98.0, body.size.x, 8.0), Color(0.2, 0.2, 0.25))
-	# Урд шил + Батаа (жолооч)
-	var ws := Rect2(bx + 8.0, top + 12.0, 62.0, 62.0)
-	draw_rect(ws, Color(0.55, 0.75, 0.9))
-	_draw_bataa(Vector2(ws.position.x + 30.0, ws.position.y + 34.0))
-	# Хаалга
-	var door := Rect2(_door_x() - 26.0, top + 12.0, 52.0, 116.0)
-	draw_rect(door, Color(0.1, 0.1, 0.14))
-	draw_rect(Rect2(door.position, Vector2(door.size.x * (1.0 - door_open), door.size.y)), Color(0.4, 0.55, 0.65))
-	draw_rect(door, Color(0.2, 0.2, 0.25), false, 3.0)
-	# Карт уншигч (дэлгэцтэй)
+func _draw_bus(g: float) -> void:
+	var h := 112.0 if compact else 140.0
+	var bx := _door_x() - 114.0
+	UiTheme.bus(self, Rect2(bx, g - h, size.x - 16.0 - bx, h - 12.0), door_open, true)
+	# Карт уншигч (шон дээр, автобусны өмнө): дэлгэц дээр төлсөн үнэ.
 	var rp := _reader_pos()
-	var rr := Rect2(rp - Vector2(22.0, 18.0), Vector2(44.0, 50.0))
-	draw_rect(rr, Color(0.15, 0.15, 0.2))
-	draw_rect(Rect2(rr.position + Vector2(4, 4), Vector2(36, 18)), Color(0.02, 0.05, 0.08))
-	draw_string(font, rr.position + Vector2(0, 19), reader_text, HORIZONTAL_ALIGNMENT_CENTER, 44.0, 13, reader_color)
-	draw_rect(Rect2(rr.position + Vector2(10, 28), Vector2(24, 14)), Color(0.3, 0.7, 0.9))   # карт тулгах хэсэг
-	# Цонхнууд
-	var wx := _door_x() + 74.0
-	while wx + 60.0 < size.x:
-		draw_rect(Rect2(wx, top + 12.0, 60.0, 46.0), Color(0.55, 0.75, 0.9))
-		wx += 72.0
-	# Дугуй
-	for x in [bx + 60.0, size.x - 70.0]:
-		draw_circle(Vector2(x, g - 8.0), 18.0, Color(0.12, 0.12, 0.14))
-		draw_circle(Vector2(x, g - 8.0), 7.0, Color(0.6, 0.6, 0.65))
-	draw_string(font, Vector2(_door_x() + 80.0, top + 88.0), "Batbus 7", HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(0.3, 0.2, 0.05))
+	draw_style_box(UiTheme.paper(Color("8B8FA3"), 3, 2, UiTheme.INK, 0), Rect2(Vector2(rp.x - 4, rp.y + 30), Vector2(8, g - rp.y - 30)))
+	var rr := Rect2(rp - Vector2(28.0, 22.0), Vector2(56.0, 52.0))
+	UiTheme.box(self, rr, UiTheme.CARD, 8, 2, 4)
+	var scr := Rect2(rr.position + Vector2(5, 5), Vector2(46, 22))
+	draw_style_box(UiTheme.paper(UiTheme.CODE_BG, 4, 0, UiTheme.INK, 0), scr)
+	UiTheme.text_in(self, scr, reader_text, 13, reader_color, UiTheme.font("mono_b"))
+	draw_style_box(UiTheme.paper(UiTheme.CARD_BLUE, 3, 1.5, UiTheme.INK, 0), Rect2(rr.position + Vector2(16, 32), Vector2(24, 12)))
 
 
-func _draw_bataa(c: Vector2) -> void:
-	var skin := Color(0.85, 0.66, 0.5)
-	draw_rect(Rect2(c + Vector2(-16, 8), Vector2(32, 24)), Color(0.2, 0.3, 0.55))   # хүрэм
-	draw_circle(c, 13.0, skin)                                                       # толгой
-	draw_rect(Rect2(c + Vector2(-15, -16), Vector2(30, 8)), Color(0.15, 0.2, 0.4))   # малгай
-	draw_rect(Rect2(c + Vector2(-4, -20), Vector2(8, 5)), Color(0.9, 0.8, 0.2))
-	draw_circle(c + Vector2(-5, -1), 1.8, Color.BLACK)
-	draw_circle(c + Vector2(5, -1), 1.8, Color.BLACK)
-	draw_line(c + Vector2(-6, 6), c + Vector2(6, 6), Color(0.3, 0.2, 0.15), 2.0)     # сахал
-	draw_arc(c + Vector2(4, 26), 12.0, PI, TAU, 16, Color(0.15, 0.15, 0.15), 3.0)   # жолоо
+## Тайлбар/алдааны цаасан тэмдэглэл (зүүн дээд буланд). Яриа биш: хэн ч «хэлэхгүй».
+func _draw_note() -> void:
+	var f := UiTheme.font("bold")
+	var w := minf(_bus_x() - 40.0, 560.0)
+	var text_h := f.get_multiline_string_size(bubble_text, HORIZONTAL_ALIGNMENT_LEFT, w - 28.0, 15).y
+	var r := Rect2(14.0, 12.0, w, 18.0 + text_h)
+	UiTheme.box(self, r, Color("FFF6D6"), 10, 2, 4)
+	draw_rect(Rect2(r.position + Vector2(2, 2), Vector2(6, r.size.y - 4)), UiTheme.GLOW)
+	draw_multiline_string(f, r.position + Vector2(18, 8 + f.get_ascent(15)), bubble_text, HORIZONTAL_ALIGNMENT_LEFT, w - 28.0, 15, -1, UiTheme.INK)
 
 
-func _draw_bubble(font: Font) -> void:
-	var w := minf(_bus_x() - 30.0, 640.0)
-	var text_h := font.get_multiline_string_size(bubble_text, HORIZONTAL_ALIGNMENT_LEFT, w - 24.0, 16).y
-	var r := Rect2(12.0, 8.0, w, 34.0 + text_h)   # бичгийн хэмжээнд тааруулна
-	draw_rect(r, Color(0.97, 0.97, 1.0))
-	# Батаа руу заасан сүүл
-	var tip := Vector2(_bus_x() + 20.0, _ground() - 110.0)
-	draw_colored_polygon(PackedVector2Array([r.end - Vector2(40, 2), r.end - Vector2(10, 2), tip]), Color(0.97, 0.97, 1.0))
-	draw_string(font, r.position + Vector2(12, 20), "Батаа:", HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(0.35, 0.35, 0.5))
-	draw_multiline_string(font, r.position + Vector2(12, 42), bubble_text, HORIZONTAL_ALIGNMENT_LEFT, w - 24.0, 16, -1, Color(0.08, 0.08, 0.12))
-
-
-func _draw_rider(font: Font, p: Rider) -> void:
+func _draw_rider(p: Rider) -> void:
 	if p.alpha < 0.05:
 		return   # автобусанд суусан (алга болсон) зорчигч
 	var a := p.alpha
 	var x := p.pos.x
 	var g := p.pos.y
-	var skin := Color(p.skin.r, p.skin.g, p.skin.b, a)
-	var shirt := Color(p.shirt.r, p.shirt.g, p.shirt.b, a)
-	var pants := Color(0.2, 0.2, 0.3, a)
-	var s := 0.8 if p.age < 14 else (1.0 if p.age < 60 else 0.95)   # хүүхэд жижиг
+	var s := 0.8 if p.age < 14 else 1.0   # хүүхэд жижиг
 	if compact:
-		s *= 0.72
-	draw_line(Vector2(x - 5, g), Vector2(x - 5, g - 28 * s), pants, 5.0)
-	draw_line(Vector2(x + 5, g), Vector2(x + 5, g - 28 * s), pants, 5.0)
-	draw_rect(Rect2(x - 11, g - 60 * s, 22, 34 * s), shirt)
-	draw_circle(Vector2(x, g - 72 * s), 11.0, skin)
-	if p.age >= 60:
-		draw_arc(Vector2(x, g - 76 * s), 11.0, PI, TAU, 12, Color(0.85, 0.85, 0.85, a), 4.0)   # буурал үс
-	if p.card == 1:
-		draw_rect(Rect2(x + 13, g - 46 * s, 14, 10), Color(0.3, 0.7, 0.95, a))                # оюутны карт
-	# Нас/карт нь хөлийн доор, төлсөн үнэ ба ✓/✗ нь толгойн хажууд (яриатай давхцахгүй).
-	var info := "%d нас" % p.age   # карттай эсэх нь гарт байгаа цэнхэр картаар харагдана
-	draw_string(font, Vector2(x - 40, g + 14), info, HORIZONTAL_ALIGNMENT_CENTER, 80.0, 11, Color(1, 1, 1, maxf(a, 0.6)))
-	var col := GREEN if p.mark == 1 else RED
-	if p.label != "":
-		draw_string(font, Vector2(x + 13, g - 74 * s), p.label, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, col)
-	if p.mark != 0:
-		draw_string(font, Vector2(x + 13, g - 56 * s), "✓" if p.mark == 1 else "✗", HORIZONTAL_ALIGNMENT_LEFT, -1, 18, col)
+		s *= 0.78
+	UiTheme.person(self, p.pos, p.shirt, p.skin, s, a, p.card == 1, p.age >= 60)
+	# Нас: толгой дээрх цаасан шошго (карттай эсэх нь гарт байгаа цэнхэр картаар харагдана).
+	var tr := Rect2(x - 18.0, g - 108.0 * s - 4.0, 36.0, 22.0)
+	draw_style_box(UiTheme.paper(Color(UiTheme.CARD, a), 6, 2, Color(UiTheme.INK, a), 0), tr)
+	UiTheme.text_in(self, tr, str(p.age), 15, Color(UiTheme.INK, a), UiTheme.font("xbold"))
+	# Төлсөн үнэ + ✓/✗: биеийн баруун талд.
+	if p.label != "" and p.mark != 0:
+		var ok := p.mark == 1
+		var txt := "%s %s" % [p.label, "✓" if ok else "✗"]
+		var f := UiTheme.font("bold")
+		var w := f.get_string_size(txt, HORIZONTAL_ALIGNMENT_LEFT, -1, 13).x + 14.0
+		var lr := Rect2(x + 14.0, g - 70.0 * s, w, 20.0)
+		draw_style_box(UiTheme.paper(Color(UiTheme.TRUE if ok else UiTheme.FALSE, maxf(a, 0.85)), 10, 0, UiTheme.INK, 0), lr)
+		UiTheme.text_in(self, lr, txt, 13, Color.WHITE, f)

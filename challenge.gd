@@ -1,6 +1,7 @@
 class_name ChallengePanel
 extends VBoxContainer
-## Сорилтын түвшин (нэмэлт): Батаа жолоочийн автобусны карт уншигчийн эвдэрсэн програмыг засна.
+## Сорилтын түвшин (нэмэлт): автобусны карт уншигчийн эвдэрсэн програмыг засна. Яриагүй: дүрэм нь
+## чипээр, тайлбар нь үзэгдэл доторх тэмдэглэлээр харагдана.
 ## Flowgorithm маягаар: палитраас блок чирч блок схемийн сум дээр тавина (FlowCanvas), эсвэл
 ## C++ кодыг шууд бичнэ. Хоёулаа нэг програм (model): блок өөрчлөгдвөл код, код өөрчлөгдвөл блок.
 ## Шалгалт: 8 зорчигч (хилийн утгууд). Зөв үнэ 3 дахь буруу шалгалтаас хойш л харагдана.
@@ -12,23 +13,17 @@ signal message(text: String, kind: int)
 const INPUTS := ["age", "card"]
 const OPS := [">", ">=", "<", "<=", "==", "!="]
 const JOINS := ["—", "&&", "||"]
-const YELLOW := Color(1.0, 0.85, 0.3)
-const T_COL := Color(0.4, 0.9, 0.5)
-const F_COL := Color(1.0, 0.45, 0.45)
-const LINES := [
-	"Сайн байна уу! Намайг Батаа гэдэг. Би автобусны жолооч.",
-	"Миний автобусны карт уншигчийн програм эвдэрчихлээ. Чи засаад өгөөч?",
-	"Дүрэм: 60 ба түүнээс дээш настай хүн үнэгүй. Оюутны карттай, 18 хүрээгүй хүн 250₮. Бусад нь 500₮.",
-	"Програм нь энэ. Буруу, дутуу хэсгийг олоод засаарай! Блокийг чирж, эсвэл кодыг шууд засаж болно.",
-]
-const RULES := "Дүрэм:  60+ нас → 0₮   ·   оюутны карттай БӨГӨӨД 18 хүрээгүй → 250₮   ·   бусад → 500₮"
+const YELLOW := UiTheme.GLOW
+const T_COL := UiTheme.TRUE
+const F_COL := UiTheme.FALSE
+## Үнийн дүрэм: богино чипүүд (бичвэр биш).
+const RULES := ["60+ нас → 0₮", "карт && < 18 → 250₮", "бусад → 500₮"]
 
 var mono: Font
 var glow_request: Callable   # main.gd-ийн _update_glow
 var bus: BusView
 var canvas: FlowCanvas
-var phase := "dialog"        # dialog → choose → build ⇄ testing → done
-var line_i := 0
+var phase := "build"         # build ⇄ testing → done
 var model: Array = []
 var cases: Array = []
 var fails := 0
@@ -40,11 +35,11 @@ var inspector: HBoxContainer
 var code_edit: CodeEdit
 var code_error: Label
 var parse_timer: Timer
-var btn_line: Button
-var btn_accept: Button
 var btn_skip: Button
 var btn_test: Button
 var info_label: Label
+var note_panel: PanelContainer   # тайлбар/алдааны тэмдэглэл (яриа биш)
+var note_label: Label
 var status_label: Label
 
 
@@ -74,11 +69,38 @@ func setup(mono_font: Font, glow_cb: Callable) -> void:
 	bus = BusView.new()
 	add_child(bus)
 
-	var rules := Label.new()
-	rules.text = RULES
-	rules.add_theme_font_size_override("font_size", 15)
-	rules.add_theme_color_override("font_color", YELLOW)
+	var rules := HBoxContainer.new()
+	rules.add_theme_constant_override("separation", 8)
 	add_child(rules)
+	var rl := Label.new()
+	rl.text = "Дүрэм"
+	rl.add_theme_font_override("font", UiTheme.font("bold"))
+	rl.add_theme_font_size_override("font_size", 15)
+	rl.add_theme_color_override("font_color", UiTheme.INK2)
+	rules.add_child(rl)
+	for r in RULES:
+		var chip := PanelContainer.new()
+		chip.add_theme_stylebox_override("panel", UiTheme.tag(UiTheme.COND_ACC.lerp(Color.WHITE, 0.8)))
+		var cl0 := Label.new()
+		cl0.text = r
+		cl0.add_theme_font_override("font", UiTheme.font("mono_b"))
+		cl0.add_theme_font_size_override("font_size", 14)
+		chip.add_child(cl0)
+		rules.add_child(chip)
+	# Тайлбарын тэмдэглэл (шалгалтын дараа): дүрмийн мөрийн баруун талд, үзэгдлийг таглахгүй.
+	note_panel = PanelContainer.new()
+	note_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var ns := UiTheme.paper(Color("FFF6D6"), 10, 2, UiTheme.INK, 3, 6)
+	ns.border_width_left = 6
+	ns.border_color = UiTheme.INK
+	note_panel.add_theme_stylebox_override("panel", ns)
+	note_label = Label.new()
+	note_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	note_label.add_theme_font_override("font", UiTheme.font("bold"))
+	note_label.add_theme_font_size_override("font_size", 14)
+	note_panel.add_child(note_label)
+	note_panel.visible = false
+	rules.add_child(note_panel)
 
 	build_area = HBoxContainer.new()
 	build_area.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -86,22 +108,25 @@ func setup(mono_font: Font, glow_cb: Callable) -> void:
 	add_child(build_area)
 
 	# --- Палитр (зүүн) ---
+	var pal_card := PanelContainer.new()
+	pal_card.add_theme_stylebox_override("panel", UiTheme.paper(UiTheme.CARD, 14, 2, UiTheme.INK, 6, 10))
+	build_area.add_child(pal_card)
 	var pal := VBoxContainer.new()
-	pal.custom_minimum_size = Vector2(150, 0)
-	pal.add_theme_constant_override("separation", 8)
-	build_area.add_child(pal)
+	pal.custom_minimum_size = Vector2(130, 0)
+	pal.add_theme_constant_override("separation", 10)
+	pal_card.add_child(pal)
 	var pl := Label.new()
-	pl.text = "Блок (чирж тавь)"
-	pl.add_theme_font_size_override("font_size", 14)
+	pl.text = "Блок"
+	pl.tooltip_text = "Чирээд сум дээр тавь"
+	pl.mouse_filter = Control.MOUSE_FILTER_PASS
+	pl.add_theme_font_override("font", UiTheme.font("bold"))
+	pl.add_theme_font_size_override("font_size", 16)
+	pl.add_theme_color_override("font_color", UiTheme.INK2)
 	pal.add_child(pl)
-	for item in [["int x = …", "decl", Color(0.9, 0.9, 0.95)], ["x = …", "assign", Color(0.9, 0.9, 0.95)],
-			["◇ if", "if", YELLOW], ["◇ if / else", "ifelse", YELLOW]]:
+	var cond_bg := UiTheme.COND_ACC.lerp(Color.WHITE, 0.8)
+	for item in [["int x = …", "decl", UiTheme.SAND], ["x = …", "assign", UiTheme.CARD],
+			["◇ if", "if", cond_bg], ["◇ if/else", "ifelse", cond_bg]]:
 		pal.add_child(_palette_item(item[0], item[1], item[2]))
-	var tip := Label.new()
-	tip.text = "Сум дээр тавина.\nБлок дээр дарж засна.\nДугуй: томруулах\nДунд товч: зөөх"
-	tip.add_theme_font_size_override("font_size", 12)
-	tip.add_theme_color_override("font_color", Color(1, 1, 1, 0.45))
-	pal.add_child(tip)
 
 	# --- Блок схем (дунд) + сонгосон блокийн засвар ---
 	var mid := VBoxContainer.new()
@@ -122,12 +147,19 @@ func setup(mono_font: Font, glow_cb: Callable) -> void:
 	mid.add_child(inspector)
 
 	# --- C++ код (баруун): шууд бичиж болно ---
+	var right_card := PanelContainer.new()
+	right_card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	right_card.add_theme_stylebox_override("panel", UiTheme.code_panel(10))
+	build_area.add_child(right_card)
 	var right := VBoxContainer.new()
-	right.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	build_area.add_child(right)
+	right_card.add_child(right)
 	var cl := Label.new()
-	cl.text = "C++ (бичиж болно)"
+	cl.text = "C++"
+	cl.tooltip_text = "Кодыг шууд бичиж болно"
+	cl.mouse_filter = Control.MOUSE_FILTER_PASS
+	cl.add_theme_font_override("font", UiTheme.font("mono_b"))
 	cl.add_theme_font_size_override("font_size", 14)
+	cl.add_theme_color_override("font_color", UiTheme.CODE_DIM)
 	right.add_child(cl)
 	code_edit = CodeEdit.new()
 	code_edit.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -140,7 +172,7 @@ func setup(mono_font: Font, glow_cb: Callable) -> void:
 	code_error = Label.new()
 	code_error.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	code_error.add_theme_font_size_override("font_size", 14)
-	code_error.add_theme_color_override("font_color", F_COL)
+	code_error.add_theme_color_override("font_color", Color("FF9A93"))
 	right.add_child(code_error)
 	parse_timer = Timer.new()
 	parse_timer.one_shot = true
@@ -152,18 +184,19 @@ func setup(mono_font: Font, glow_cb: Callable) -> void:
 	var bottom := HBoxContainer.new()
 	bottom.add_theme_constant_override("separation", 8)
 	add_child(bottom)
-	btn_line = _button(bottom, "Дараагийн алхам", _next_line, "→ / D")
-	btn_accept = _button(bottom, "Засъя ⚔", _accept, "Enter")
-	btn_skip = _button(bottom, "Сорилтыг алгасах", func(): skipped.emit(), "Нэмэлт түвшин: алгасаж болно")
-	btn_test = _button(bottom, "Турших ▶", _on_test, "Enter")
 	info_label = Label.new()
+	info_label.add_theme_font_override("font", UiTheme.font("xbold"))
 	info_label.add_theme_font_size_override("font_size", 18)
+	info_label.add_theme_color_override("font_color", UiTheme.TRUE.darkened(0.2))
 	bottom.add_child(info_label)
 	status_label = Label.new()
 	status_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	status_label.clip_text = true
-	status_label.add_theme_font_size_override("font_size", 16)
+	status_label.add_theme_font_override("font", UiTheme.font("bold"))
+	status_label.add_theme_font_size_override("font_size", 15)
 	bottom.add_child(status_label)
+	btn_skip = _button(bottom, "Алгасах »", func(): skipped.emit(), "Нэмэлт түвшин: алгасаж болно")
+	btn_test = _button(bottom, "▶  Турших", _on_test, "Enter")
 
 
 func _palette_item(text: String, kind: String, border: Color) -> PaletteItem:
@@ -173,27 +206,18 @@ func _palette_item(text: String, kind: String, border: Color) -> PaletteItem:
 	it.mono = mono
 	it.mouse_default_cursor_shape = Control.CURSOR_DRAG
 	it.tooltip_text = "Чирээд блок схемийн сум дээр тавь"
-	var st := StyleBoxFlat.new()
-	st.bg_color = Color(0.13, 0.15, 0.2)
-	st.set_border_width_all(2)
-	st.border_color = border
-	st.set_corner_radius_all(14 if kind.begins_with("if") else 4)
-	st.set_content_margin_all(8)
+	var st := UiTheme.paper(border, 10, 2, UiTheme.INK, 4, 8)
 	it.add_theme_stylebox_override("panel", st)
 	if kind == "decl":
 		# Хувьсагчийн блок: [нэр] / [утга] / [int] — түвшин 1-5-ын хайрцаг шиг.
 		var v := VBoxContainer.new()
 		v.add_theme_constant_override("separation", 0)
 		v.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		for part in [["x", Color(0.12, 0.14, 0.2), Color.WHITE, 14], ["= …", Color(0.13, 0.15, 0.2), Color.WHITE, 16], ["int", YELLOW, Color(0.1, 0.1, 0.12), 12]]:
+		for part in [["x", UiTheme.CARD, UiTheme.INK, 14], ["= …", UiTheme.BOX, UiTheme.INK, 16], ["int", UiTheme.INT_TAG, UiTheme.INK, 12]]:
 			var pc := PanelContainer.new()
 			pc.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 			pc.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			var ps := StyleBoxFlat.new()
-			ps.bg_color = part[1]
-			ps.set_border_width_all(0 if part[0] == "int" else 2)
-			ps.border_color = Color(0.9, 0.9, 0.95)
-			ps.set_corner_radius_all(8 if part[0] == "int" else 3)
+			var ps := UiTheme.paper(part[1], 8 if part[0] == "int" else 4, 2, UiTheme.INK, 0)
 			ps.content_margin_left = 26 if part[0] == "= …" else 10
 			ps.content_margin_right = ps.content_margin_left
 			pc.add_theme_stylebox_override("panel", ps)
@@ -209,7 +233,7 @@ func _palette_item(text: String, kind: String, border: Color) -> PaletteItem:
 	var l := Label.new()
 	l.text = text
 	l.add_theme_font_override("font", mono)
-	l.add_theme_font_size_override("font_size", 16)
+	l.add_theme_font_size_override("font_size", 15)
 	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	it.add_child(l)
@@ -218,13 +242,14 @@ func _palette_item(text: String, kind: String, border: Color) -> PaletteItem:
 
 func _highlighter() -> CodeHighlighter:
 	var h := CodeHighlighter.new()
-	for kw in ["int", "if", "else"]:
-		h.add_keyword_color(kw, Color(0.95, 0.55, 0.75))
-	h.number_color = Color(0.65, 0.85, 1.0)
-	h.symbol_color = Color(0.85, 0.85, 0.9)
-	h.function_color = Color.WHITE
-	h.member_variable_color = Color.WHITE
-	h.add_color_region("//", "", Color(0.5, 0.55, 0.6), true)
+	h.add_keyword_color("int", UiTheme.INT_TAG)
+	for kw in ["if", "else"]:
+		h.add_keyword_color(kw, UiTheme.CODE_KW)
+	h.number_color = UiTheme.CODE_NUM
+	h.symbol_color = UiTheme.CODE_SYM
+	h.function_color = UiTheme.CODE_TXT
+	h.member_variable_color = UiTheme.CODE_TXT
+	h.add_color_region("//", "", UiTheme.CODE_DIM, true)
 	return h
 
 
@@ -242,8 +267,7 @@ func _button(parent: Control, text: String, handler: Callable, hint: String) -> 
 # ---------------------------------------------------------------- урсгал
 
 func start() -> void:
-	phase = "dialog"
-	line_i = 0
+	phase = "build"
 	fails = 0
 	busy = false
 	model = broken_program()
@@ -253,18 +277,15 @@ func start() -> void:
 	bus.set_compact(false)
 	cases = make_cases()
 	bus.riders.clear()
-	bus.bubble_text = LINES[0]
-	build_area.visible = false
+	_note("")
 	info_label.text = ""
 	_status("", 0)
 	code_error.text = ""
-	_update_bottom()
+	_accept()   # яриагүй: эвдэрсэн програм шууд засварт нээгдэнэ
 
 
 func _update_bottom() -> void:
-	btn_line.visible = phase == "dialog"
-	btn_accept.visible = phase == "choose"
-	btn_skip.visible = phase == "choose" or phase == "build"
+	btn_skip.visible = phase == "build"
 	btn_test.visible = phase == "build" or phase == "testing"
 	btn_test.disabled = busy
 	canvas.editable = phase == "build"
@@ -275,39 +296,24 @@ func _update_bottom() -> void:
 
 func glow_target() -> Control:
 	match phase:
-		"dialog": return btn_line
-		"choose": return btn_accept
 		"build": return btn_test
 	return null
 
 
+## → / D: яриа байхгүй болсон тул юу ч хийхгүй (main.gd дуудсаар байна).
 func key_next() -> void:
-	if phase == "dialog":
-		_next_line()
+	pass
 
 
 func key_enter() -> void:
-	if phase == "choose":
-		_accept()
-	elif phase == "build":
+	if phase == "build":
 		_on_test()
-
-
-func _next_line() -> void:
-	line_i += 1
-	if line_i < LINES.size():
-		bus.bubble_text = LINES[line_i]
-		if line_i == LINES.size() - 1:
-			phase = "choose"
-			build_area.visible = true   # эвдэрсэн програмыг одоо харуулна
-			_rebuild()
-	_update_bottom()
 
 
 func _accept() -> void:
 	phase = "build"
 	build_area.visible = true
-	bus.bubble_text = "Програмаа засаад «Турших» дар. Зорчигчид хүлээж байна!"
+	_note("")
 	bus.set_compact(true)   # програмын талбай томорно
 	bus.set_queue(cases)
 	canvas._need_center = true
@@ -315,9 +321,15 @@ func _accept() -> void:
 	_update_bottom()
 
 
+## Тайлбарын тэмдэглэл: хоосон бол нуугдана.
+func _note(text: String) -> void:
+	note_label.text = text
+	note_panel.visible = text != ""
+
+
 func _status(text: String, kind: int) -> void:
 	status_label.text = text
-	status_label.add_theme_color_override("font_color", [Color.WHITE, T_COL, F_COL][kind if kind >= 0 else 2])
+	status_label.add_theme_color_override("font_color", [UiTheme.INK, T_COL.darkened(0.2), F_COL.darkened(0.1)][kind if kind >= 0 else 2])
 	message.emit(text, kind)
 
 
@@ -748,15 +760,15 @@ func _refresh_inspector() -> void:
 	var b = canvas.selected
 	if b == null or phase != "build":
 		var hint := Label.new()
-		hint.text = "Блок дээр дарж утгыг нь засна.  Блокийг өөр сум руу чирж зөөнө." if phase == "build" else ""
+		hint.text = "Блок дээр дар" if phase == "build" else ""
 		hint.add_theme_font_size_override("font_size", 14)
-		hint.add_theme_color_override("font_color", Color(1, 1, 1, 0.45))
+		hint.add_theme_color_override("font_color", UiTheme.INK2)
 		inspector.add_child(hint)
 		return
 	var h := inspector
 	match b.t:
 		"decl":
-			h.add_child(_mono_label("int", YELLOW))
+			h.add_child(_mono_label("int", UiTheme.BOX_DARK.darkened(0.3)))
 			h.add_child(_edit(str(b.var), 90, func(t: String): b.var = t))
 			h.add_child(_mono_label("="))
 			h.add_child(_edit(str(b.expr), 140, func(t: String): b.expr = t))
@@ -817,7 +829,7 @@ func _after_edit(structural: bool) -> void:
 		_refresh_inspector()
 
 
-func _mono_label(text: String, col := Color.WHITE) -> Label:
+func _mono_label(text: String, col := UiTheme.INK) -> Label:
 	var l := Label.new()
 	l.text = text
 	l.add_theme_font_override("font", mono)
@@ -875,7 +887,7 @@ func _on_test() -> void:
 	var results := check()
 	for r in results:
 		if r.error != "":
-			bus.bubble_text = "Програм алдаа заалаа:  " + r.error
+			_note("✗  " + r.error)
 			_status("✗  " + r.error, -1)
 			busy = false
 			phase = "build"
@@ -884,7 +896,7 @@ func _on_test() -> void:
 	var shown: Array = []
 	for r in results:
 		shown.append({"price": "%d₮" % r.got, "ok": r.ok})
-	bus.bubble_text = "Харцгаая…"
+	_note("")
 	_status("", 0)
 	await bus.run_test(cases, shown)
 	var good := results.filter(func(r): return r.ok).size()
@@ -892,14 +904,14 @@ func _on_test() -> void:
 	if good == results.size():
 		phase = "done"
 		busy = false
-		bus.bubble_text = "Баярлалаа! Автобус маань зөв ажиллаж байна ★"
+		_note("")
 		_status("ЗӨВ ✓  Сорилт давлаа ★", 1)
 		_update_bottom()
 		solved.emit()
 		return
 	fails += 1
 	var wrong: Array = results.filter(func(r): return not r.ok)
-	bus.bubble_text = _hint(wrong[0])
+	_note(_hint(wrong[0]))
 	# Буруу зорчигчид: эхний 2 удаа зөвхөн таны үнэ; 3 дахь удаагаас зөв үнэ ч харагдана.
 	var lines: Array = []
 	for w in wrong.slice(0, 3):
@@ -915,7 +927,7 @@ func _on_test() -> void:
 	_update_bottom()
 
 
-## Батаагийн зөвлөгөө: шинж тэмдгийг хэлнэ, хариуг шууд хэлэхгүй.
+## Тайлбарын тэмдэглэл: шинж тэмдгийг хэлнэ, хариуг шууд хэлэхгүй.
 func _hint(w: Dictionary) -> String:
 	var age: int = w.age
 	var card: int = w.card

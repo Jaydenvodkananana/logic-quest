@@ -1,6 +1,8 @@
 class_name GuardView
 extends Control
-## Хамгаалагч, дараалалд зогсох хүмүүс, хаалгыг зурж, шалгалтыг хөдөлгөөнөөр үзүүлнэ.
+## Түвшин 8: автобусны хаалга (цаасан диорама). Дараалалд зогсох зорчигчид, хаалганы дүрэм (маршрутын самбар дээр),
+## карт уншигч. Дүрэм «true» бол хаалга нээгдэж зорчигч сууна, «false» бол уншигч улаан болж буцна.
+## (Дотоод нэрс хуучнаараа: ticket = зорчигчийн карт (card), guard_stop = уншигч «үгүй» гэсэн.)
 
 class Person extends RefCounted:
 	var age: int = 0
@@ -12,8 +14,10 @@ class Person extends RefCounted:
 	var skin: Color = Color(0.9, 0.75, 0.6)
 
 const SPACING := 76.0
-const SHIRTS := [Color(0.3, 0.5, 0.8), Color(0.75, 0.35, 0.35), Color(0.35, 0.65, 0.45), Color(0.7, 0.55, 0.25), Color(0.55, 0.4, 0.7)]
-const SKINS := [Color(0.92, 0.76, 0.62), Color(0.8, 0.6, 0.45), Color(0.6, 0.42, 0.3), Color(0.95, 0.82, 0.7)]
+const SHIRTS := UiTheme.SHIRTS
+const SKINS := UiTheme.SKINS
+const ALLOW := Color(0.5, 0.95, 0.55)   # bubble_color тэмдэг: зөвшөөрсөн
+const DENY := Color(1.0, 0.5, 0.5)      # bubble_color тэмдэг: татгалзсан
 
 var speed := 1.0
 var running := false
@@ -50,11 +54,11 @@ func _door_x() -> float:
 
 
 func _guard_x() -> float:
-	return _door_x() - 95.0
+	return _door_x() - 142.0   # уншигч автобусны урд, явган зам дээр
 
 
 func _spot_x() -> float:
-	return _guard_x() - 75.0
+	return _guard_x() - 62.0
 
 
 func reset() -> void:
@@ -104,7 +108,7 @@ func run_test(crowd: Array, two: bool, free: bool, judge: Callable) -> Dictionar
 		if free:
 			bubble_color = Color(0.9, 0.9, 1.0)
 		else:
-			bubble_color = Color(0.5, 0.95, 0.55) if allowed else Color(1.0, 0.5, 0.5)
+			bubble_color = ALLOW if allowed else DENY
 		await get_tree().create_timer(_d(0.6)).timeout
 		if not free:
 			var ok: bool = verdict.expect == allowed
@@ -139,77 +143,61 @@ func run_test(crowd: Array, two: bool, free: bool, judge: Callable) -> Dictionar
 
 
 func _draw() -> void:
-	var font := get_theme_default_font()
-	var w := size.x
 	var g := _ground()
-	var dx := _door_x()
-	draw_rect(Rect2(0.0, 0.0, w, size.y), Color(0.08, 0.1, 0.18))
-	draw_rect(Rect2(0.0, g, w, size.y - g), Color(0.17, 0.19, 0.22))
-	var bx := dx - 90.0
-	draw_rect(Rect2(bx, g - 190.0, w - bx - 6.0, 190.0), Color(0.27, 0.21, 0.32))
-	draw_rect(Rect2(bx + 6.0, g - 184.0, w - bx - 18.0, 32.0), Color(0.07, 0.07, 0.1))
-	draw_string(font, Vector2(bx + 6.0, g - 162.0), sign_text, HORIZONTAL_ALIGNMENT_CENTER, w - bx - 18.0, 15, Color(1.0, 0.9, 0.4))
-	draw_rect(Rect2(dx - 45.0, g - 130.0, 90.0, 130.0), Color(0.03, 0.03, 0.05))
-	draw_rect(Rect2(dx - 45.0, g - 130.0, 90.0 * (1.0 - door_open), 130.0), Color(0.55, 0.35, 0.2))
-	_draw_guard(g)
+	UiTheme.diorama(self, Rect2(Vector2.ZERO, size), Color("DDF1ED"), Color("B9E0D8"), Color("95D0C4"), size.y - g, 11)
+	_draw_bus(g)
 	for p in people:
-		_draw_person(font, p)
+		_draw_person(p)
 	if bubble_text != "":
-		var rx := maxf(4.0, _guard_x() - 260.0)
-		var r := Rect2(rx, g - 240.0, 310.0, 34.0)
-		draw_rect(r, Color(0.04, 0.04, 0.07, 0.92))
-		draw_rect(r, bubble_color, false, 2.0)
-		draw_string(font, Vector2(rx, g - 240.0 + 24.0), bubble_text, HORIZONTAL_ALIGNMENT_CENTER, 310.0, 18, bubble_color)
+		# Шалгалтын үр дүн: цаасан шошго (яриа биш).
+		var bg := UiTheme.CARD
+		if bubble_color == ALLOW:
+			bg = UiTheme.TRUE_BG
+		elif bubble_color == DENY:
+			bg = UiTheme.FALSE_BG
+		UiTheme.chip_text(self, Vector2(maxf(170.0, _spot_x()), 34.0), bubble_text, 16, bg, UiTheme.INK)
 
 
-func _draw_guard(g: float) -> void:
-	var x := _guard_x()
-	var leg := Color(0.14, 0.14, 0.24)
-	var armor := Color(0.25, 0.35, 0.68)
-	var skin := Color(0.9, 0.75, 0.6)
-	# жад
-	draw_line(Vector2(x + 36.0, g), Vector2(x + 36.0, g - 175.0), Color(0.6, 0.5, 0.35), 4.0)
-	draw_colored_polygon(PackedVector2Array([Vector2(x + 30.0, g - 175.0), Vector2(x + 42.0, g - 175.0), Vector2(x + 36.0, g - 197.0)]), Color(0.8, 0.82, 0.88))
-	# хөл, бие
-	draw_line(Vector2(x - 11.0, g), Vector2(x - 11.0, g - 42.0), leg, 9.0)
-	draw_line(Vector2(x + 11.0, g), Vector2(x + 11.0, g - 42.0), leg, 9.0)
-	draw_rect(Rect2(x - 26.0, g - 104.0, 52.0, 64.0), armor)
-	draw_rect(Rect2(x - 26.0, g - 66.0, 52.0, 8.0), Color(0.8, 0.7, 0.2))
-	# гар
-	draw_line(Vector2(x + 26.0, g - 96.0), Vector2(x + 36.0, g - 70.0), armor, 8.0)
+## Цаасан шар автобус (хаалга нь _door_x()-д), дээр нь маршрутын самбар (дүрэм), урд нь карт уншигч.
+func _draw_bus(g: float) -> void:
+	var dx := _door_x()
+	var bus_r := Rect2(dx - 114.0, g - 150.0, size.x - 16.0 - (dx - 114.0), 138.0)
+	UiTheme.bus(self, bus_r, door_open, true)
+	# Маршрутын самбар: хаалганы дүрэм (C++ нөхцөл) харанхуй LED самбар дээр.
+	if sign_text != "":
+		var mf := UiTheme.font("mono_b")
+		var tw := mf.get_string_size(sign_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x + 28.0
+		var sr := Rect2(size.x - 16.0 - tw, bus_r.position.y - 48.0, tw, 34.0)
+		draw_line(Vector2(sr.position.x + 20, sr.end.y), Vector2(sr.position.x + 20, bus_r.position.y), UiTheme.INK, 2.0)
+		draw_line(Vector2(sr.end.x - 20, sr.end.y), Vector2(sr.end.x - 20, bus_r.position.y), UiTheme.INK, 2.0)
+		draw_style_box(UiTheme.code_panel(0), sr)
+		UiTheme.text_in(self, sr, sign_text, 16, UiTheme.GLOW, mf)
+	# Карт уншигч (шон дээр): шалгаж байхад ногоон (нээ) эсвэл улаан (үгүй) асна.
+	var rc := UiTheme.COND_ACC
 	if guard_stop:
-		draw_line(Vector2(x - 26.0, g - 96.0), Vector2(x - 52.0, g - 136.0), armor, 8.0)
-		draw_circle(Vector2(x - 54.0, g - 142.0), 9.0, skin)
-	else:
-		draw_line(Vector2(x - 26.0, g - 96.0), Vector2(x - 33.0, g - 62.0), armor, 8.0)
-	# толгой, дуулга
-	draw_circle(Vector2(x, g - 122.0), 18.0, skin)
-	var pts := PackedVector2Array()
-	for k in range(0, 11):
-		var a := PI + PI * k / 10.0
-		pts.append(Vector2(x + 21.0 * cos(a), g - 124.0 + 21.0 * sin(a)))
-	draw_colored_polygon(pts, Color(0.55, 0.58, 0.65))
-	draw_colored_polygon(PackedVector2Array([Vector2(x - 5.0, g - 144.0), Vector2(x + 5.0, g - 144.0), Vector2(x, g - 162.0)]), Color(0.85, 0.2, 0.2))
+		rc = UiTheme.FALSE
+	elif door_open > 0.05:
+		rc = UiTheme.TRUE
+	var base := Vector2(_guard_x(), g)
+	draw_style_box(UiTheme.paper(Color("8B8FA3"), 3, 2, UiTheme.INK, 0), Rect2(base + Vector2(-4, -64), Vector2(8, 64)))
+	var b := Rect2(base + Vector2(-24, -108), Vector2(48, 48))
+	UiTheme.box(self, b, UiTheme.CARD, 8, 2, 4)
+	draw_style_box(UiTheme.paper(rc, 4, 2, UiTheme.INK, 0), Rect2(b.position + Vector2(6, 6), Vector2(36, 18)))
+	draw_style_box(UiTheme.paper(UiTheme.CARD_BLUE, 3, 1.5, UiTheme.INK, 0), Rect2(b.position + Vector2(12, 30), Vector2(24, 11)))
 
 
-func _draw_person(font: Font, p: Person) -> void:
+func _draw_person(p: Person) -> void:
 	var a := p.alpha
 	var x := p.pos.x
 	var g := p.pos.y
-	var skin := Color(p.skin.r, p.skin.g, p.skin.b, a)
-	var shirt := Color(p.shirt.r, p.shirt.g, p.shirt.b, a)
-	var pants := Color(0.2, 0.2, 0.3, a)
-	draw_line(Vector2(x - 6.0, g), Vector2(x - 6.0, g - 34.0), pants, 6.0)
-	draw_line(Vector2(x + 6.0, g), Vector2(x + 6.0, g - 34.0), pants, 6.0)
-	draw_rect(Rect2(x - 13.0, g - 72.0, 26.0, 40.0), shirt)
-	draw_line(Vector2(x - 13.0, g - 68.0), Vector2(x - 20.0, g - 42.0), skin, 5.0)
-	draw_line(Vector2(x + 13.0, g - 68.0), Vector2(x + 20.0, g - 42.0), skin, 5.0)
-	draw_circle(Vector2(x, g - 86.0), 14.0, skin)
-	draw_string(font, Vector2(x - 30.0, g - 106.0), str(p.age), HORIZONTAL_ALIGNMENT_CENTER, 60.0, 20, Color(1.0, 1.0, 1.0, a))
-	if show_ticket and p.ticket == 1:
-		draw_rect(Rect2(x + 17.0, g - 52.0, 20.0, 13.0), Color(1.0, 0.85, 0.3, a))
-		draw_line(Vector2(x + 22.0, g - 45.0), Vector2(x + 32.0, g - 45.0), Color(0.5, 0.3, 0.0, a), 2.0)
-	if p.mark == 2:
-		draw_arc(Vector2(x, g - 52.0), 52.0, 0.0, TAU, 32, Color(1.0, 0.3, 0.3, a), 3.0)
-	elif p.mark == 1:
-		draw_arc(Vector2(x, g - 52.0), 52.0, 0.0, TAU, 32, Color(0.4, 0.9, 0.5, a), 3.0)
+	UiTheme.person(self, p.pos, p.shirt, p.skin, 1.0, a, show_ticket and p.ticket == 1, p.age >= 60)
+	if a < 0.05:
+		return
+	# Нас: толгой дээрх цаасан шошго.
+	var tr := Rect2(x - 20.0, g - 112.0, 40.0, 24.0)
+	var ts := UiTheme.paper(Color(UiTheme.CARD, a), 6, 2, Color(UiTheme.INK, a), 0)
+	draw_style_box(ts, tr)
+	UiTheme.text_in(self, tr, str(p.age), 16, Color(UiTheme.INK, a), UiTheme.font("xbold"))
+	if p.mark != 0:
+		var col := UiTheme.TRUE if p.mark == 1 else UiTheme.FALSE
+		draw_arc(Vector2(x, g - 52.0), 50.0, 0.0, TAU, 40, Color(col, a), 3.5, true)

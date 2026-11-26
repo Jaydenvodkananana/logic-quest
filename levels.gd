@@ -2,9 +2,11 @@ class_name Levels
 extends RefCounted
 ## 1-р хэсгийн түвшингүүд. Тоонууд оролдлого бүрт санамсаргүй өөрчлөгдөнө ({A}, {B}... нь параметр).
 ## Програмын мөрүүд C++ хэлээр бичигдэнэ (Interp-ийг үз).
+## "map": бүлгийн дэлгэц дээрх богино нэр (байхгүй бол title).
+## "chapter": бүлэг ("var" = Хувьсагч, "cond" = Нөхцөл; UiTheme.CHAPTERS-ийг үз).
 ## mode "predict": `ask` хувьсагчийн эцсийн утгыг таа.
 ## mode "arrange": мөрүүдийг зөв дараалалд оруулж `goal_var`-г {G} болго.
-## mode "guard": хамгаалагчийн дүрмийг өөрөө бүтээ.
+## mode "guard": автобусны хаалганы дүрмийг (age, card) өөрөө бүтээ.
 ## mode "flow": if / if-else-ийн блок схем. Тайлбар (3 алхам) + мини тест (3 зөв хариулт).
 ##   kind "if"/"ifelse", in_var/out_var хувьсагч, t_val/f_val блокийн өгөх утга, {T} хил, ops операторууд.
 
@@ -14,49 +16,56 @@ static func get_levels() -> Array:
 		{
 			"title": "Хайрцаг",
 			"mode": "tutorial",
-			"story": "Хувьсагч = нэртэй хайрцаг.",
+			"chapter": "var",
+			"map": "Хайрцаг",
+			"story": "Хувьсагч = нэртэй хайрцаг.  Зорчигчдыг тоолно.",
 			"hint": "",
 		},
 		{
 			"title": "Хуулбар",
 			"mode": "predict",
-			"ask": "b",
+			"chapter": "var",
+			"ask": "note",
 			"params": {"A": [2, 9], "B": [1, 5]},
-			"story": "b хайрцаг a-г дагах уу?",
-			"hint": "int b = a; нь утгыг хуулна. Хайрцгууд холбогдохгүй.",
-			"lines": ["int a = {A};", "int b = a;", "a = a + {B};"],
+			"story": "Тоог дэвтэрт (note) хуулав. Дараа нь хүн нэмэгдэв.",
+			"hint": "int note = people; нь утгыг хуулна. Хайрцгууд холбогдохгүй.",
+			"lines": ["int people = {A};", "int note = people;", "people = people + {B};"],
 		},
 		{
 			"title": "Шинэчлэх",
 			"mode": "predict",
-			"ask": "count",
+			"chapter": "var",
+			"ask": "people",
 			"params": {"A": [2, 8], "B": [2, 4]},
-			"story": "Хайрцаг өөрийн утгаа ашиглаж болно.",
-			"hint": "count = count + 1; хуучин утгыг уншиж, нэмээд дарж бичнэ.",
-			"lines": ["int count = {A};", "count = count + 1;", "count = count + {B};"],
+			"story": "Тоолуур: хүн суух бүрт хуучин тоон дээр нэмнэ.",
+			"hint": "people = people + 1; хуучин утгыг уншиж, нэмээд дарж бичнэ.",
+			"lines": ["int people = {A};", "people = people + 1;", "people = people + {B};"],
 		},
 		{
 			"title": "/ ба %",
 			"mode": "predict",
-			"ask": "w",
+			"chapter": "var",
+			"ask": "ans",
 			"params": {"X": [11, 29], "D": [2, 4]},
 			"nonzero_rem": ["X", "D"],
-			"story": "int:   17 / 3 = 5,   17 % 3 = 2",
+			"story": "Микро бүрт {D} хүн.   int:  17 / 3 = 5 дүүрэн,  17 % 3 = 2 үлдэнэ",
 			"hint": "int-д / үлдэгдлийг хаяна, % зөвхөн үлдэгдлийг өгнө.",
-			"lines": ["int x = {X};", "int y = x / {D};", "int z = x % {D};", "int w = y * 10 + z;"],
+			"lines": ["int people = {X};", "int full = people / {D};", "int left = people % {D};", "int ans = full * 10 + left;"],
 		},
 		{
 			"title": "Дараалал",
 			"mode": "arrange",
+			"chapter": "var",
 			"goal_var": "total",
 			"params": {"A": [2, 5], "B": [2, 4], "C": [1, 9]},
-			"story": "total = {G} болго. Мөрөө чирж зөө (W / S).",
+			"story": "Өдрийн орлого: total = {G} болго. Мөрөө чирж зөө (W / S).",
 			"hint": "Эхлээд зарла, дараа нь ашигла:  {A} * {B} + {C} = {G}",
 			"lines": ["int total = {A};", "total = total * {B};", "total = total + {C};"],
 		},
 		{
 			"title": "if",
 			"mode": "flow",
+			"chapter": "cond",
 			"kind": "if",
 			"in_var": "temp",
 			"out_var": "fan",
@@ -65,12 +74,13 @@ static func get_levels() -> Array:
 			"params": {"T": [25, 32]},
 			"ops": [">", ">=", "=="],
 			"explain_ops": true,   # тайлбарт оператор бүрийг тоон шулуунаар үзүүлнэ; тест хил орчмын утгаар
-			"story": "Халуун бол сэнс асна.",
+			"story": "Автобус халуун бол сэнс асна.",
 			"hint": "if: үнэн бол блок ажиллана, худал бол алгасна.  > тэнцүүг оруулахгүй, >= оруулна, == зөвхөн тэнцүү.",
 		},
 		{
 			"title": "if / else",
 			"mode": "flow",
+			"chapter": "cond",
 			"kind": "ifelse",
 			"in_var": "score",
 			"out_var": "pass",
@@ -78,20 +88,24 @@ static func get_levels() -> Array:
 			"f_val": 0,
 			"params": {"T": [50, 70]},
 			"ops": [">=", ">", "<=", "<"],
-			"story": "Оноо хүрвэл тэнцэнэ, үгүй бол тэнцэхгүй.",
+			"story": "Жолоочийн шалгалт: оноо хүрвэл тэнцэнэ, үгүй бол тэнцэхгүй.",
 			"hint": "if / else: хоёр замын яг нэг нь ажиллана.",
 		},
 		{
 			"title": "Хоёр дүрэм (&& / ||)",
+			"map": "&& / ||",
 			"mode": "guard",
+			"chapter": "cond",
 			"rules": 2,
 			"params": {"T": [16, 21]},
-			"story": "Одоо {T} ба түүнээс дээш настай БӨГӨӨД тасалбартай хүн л орно. ticket: 1 = тасалбартай, 0 = тасалбаргүй. Хоёр нөхцөлийг C++-ийн '&&' (БӨГӨӨД) эсвэл '||' (ЭСВЭЛ)-оор холбоно.",
+			"story": "Шөнийн рейс: {T}+ настай БӨГӨӨД картай хүн л сууна.  card: 1 = картай, 0 = картгүй.  Холбох: && (БӨГӨӨД), || (ЭСВЭЛ).",
 			"hint": "'&&' нь хоёр нөхцөл ХОЁУЛАА үнэн байхыг шаарддаг. '||' нь аль нэг нь үнэн бол хангалттай.",
 		},
 		{
-			"title": "Сорилт ⚔ (нэмэлт)",
+			"title": "Сорилт",
+			"map": "Сорилт",
 			"mode": "challenge",
+			"chapter": "cond",
 			"optional": true,
 			"story": "",
 			"hint": "",
